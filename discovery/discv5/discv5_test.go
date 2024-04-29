@@ -4,13 +4,14 @@ import (
 	"context"
 	"log"
 	"testing"
+	"time"
 
 	"github.com/chainbound/valtrack/config"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/p2p/enode"
 )
 
-func TestDiscovery(t *testing.T) {
+func TestSingleDiscoveryV5(t *testing.T) {
 	pk, _ := crypto.GenerateKey()
 	ethDB, err := enode.OpenDB("")
 	if err != nil {
@@ -21,7 +22,12 @@ func TestDiscovery(t *testing.T) {
 
 	nodes, _ := disc.Start(context.Background())
 
-	for node := range nodes {
-		t.Log(node)
+	timeout := time.After(10 * time.Second)
+
+	select {
+	case <-timeout:
+		t.FailNow()
+	case <-nodes:
+		return
 	}
 }

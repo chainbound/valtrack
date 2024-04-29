@@ -24,10 +24,11 @@ var ethBootnodes []string = []string{
 	"enr:-LK4QKWrXTpV9T78hNG6s8AM6IO4XH9kFT91uZtFg1GcsJ6dKovDOr1jtAAFPnS2lvNltkOGA9k29BUN7lFh_sjuc9QBh2F0dG5ldHOIAAAAAAAAAACEZXRoMpC1MD8qAAAAAP__________gmlkgnY0gmlwhANAdd-Jc2VjcDI1NmsxoQLQa6ai7y9PMN5hpLe5HmiJSlYzMuzP7ZhwRiwHvqNXdoN0Y3CCI4yDdWRwgiOM",
 }
 
+// GetEthereumBootnodes returns the default Ethereum bootnodes in enode format.
 func GetEthereumBootnodes() []*enode.Node {
 	bootnodes := make([]*enode.Node, len(ethBootnodes))
-	for i, enodeURL := range ethBootnodes {
-		node, err := enode.ParseV4(enodeURL)
+	for i, enr := range ethBootnodes {
+		node, err := enode.Parse(enode.ValidSchemes, enr)
 		if err != nil {
 			panic(err)
 		}

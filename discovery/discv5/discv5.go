@@ -2,12 +2,12 @@ package discv5
 
 import (
 	"context"
-	"crypto/ecdsa"
 	"net"
 
 	"github.com/chainbound/valtrack/log"
 	"github.com/rs/zerolog"
 
+	"github.com/ethereum/go-ethereum/crypto"
 	glog "github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/p2p/discover"
 	"github.com/ethereum/go-ethereum/p2p/enode"
@@ -24,8 +24,13 @@ func NewDiscoveryV5(node *enode.LocalNode, port int, bootnodes []*enode.Node) *D
 
 	log := log.NewLogger("discv5")
 
+	discKey, err := crypto.GenerateKey()
+	if err != nil {
+		log.Panic().Err(err).Msg("Failed to generate discv5 key")
+	}
+
 	cfg := discover.Config{
-		PrivateKey:   &ecdsa.PrivateKey{},
+		PrivateKey:   discKey,
 		NetRestrict:  nil,
 		Unhandled:    nil,
 		Bootnodes:    bootnodes,
