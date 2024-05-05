@@ -10,7 +10,7 @@ import (
 	"github.com/rs/zerolog"
 
 	"github.com/chainbound/valtrack/pkg/discv5"
-	ut "github.com/chainbound/valtrack/pkg/utils"
+	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/p2p/discover"
 	"github.com/ethereum/go-ethereum/p2p/enode"
 	"github.com/migalabs/armiarma/src/utils"
@@ -27,18 +27,19 @@ type Crawler struct {
 	ethNode       *enode.LocalNode
 	discv5Service *discv5.Discv5Service
 }
+
 func NewDiscoveryV5(ctx context.Context, dbPath string, port int, forkDigest string, bootnodes []*enode.Node) (*Crawler, error) {
 	log := log.NewLogger("discv5")
 
-	discKey, err := ut.GenNewPrivKey()
+	discKey, err := crypto.GenerateKey()
 	if err != nil {
-		log.Panic().Err(err).Msg("Failed to generate discv5 key")
+		return nil, errors.Wrap(err, "Failed to generate discv5 key")
 	}
 
 	// Init the ethereum peerstore
 	enodeDB, err := enode.OpenDB(dbPath)
 	if err != nil {
-		return nil, errors.Wrap(err, "unable to open the enode db")
+		return nil, errors.Wrap(err, "Failed to open the DB")
 	}
 
 	// Generate a Enode with custom ENR
@@ -46,11 +47,6 @@ func NewDiscoveryV5(ctx context.Context, dbPath string, port int, forkDigest str
 
 	// define the Handler for when we discover a new ENR
 	enrHandler := func(node *enode.Node) {
-		// check if the node is valid
-		err := node.ValidateComplete()
-		if err != nil {
-			log.Warn().Err(err).Msg("error validating the ENR - ")
-		}
 		// extract the information from the enode
 		id := node.ID()
 		seq := node.Seq()
@@ -91,30 +87,25 @@ func NewDiscoveryV5(ctx context.Context, dbPath string, port int, forkDigest str
 		enrNode.Eth2Data = eth2Data
 		enrNode.Attnets = attnets
 
-		// check if there is any fork digest filter only if the flag All is not set
-
 		if eth2Data.ForkDigest.String() != forkDigest {
-			log.Info().Str("fork_digest", eth2Data.ForkDigest.String()).Msg("Fork digest does not match")
+			log.Debug().Str("fork_digest", eth2Data.ForkDigest.String()).Msg("Fork digest does not match")
 		} else {
-			log.Info().Str("node_id", id.String()).Str("ip", ip.String()).Int("udp", udp).Int("tcp", tcp).Str("fork_digest", eth2Data.ForkDigest.String()).Str("fork_epoch", eth2Data.NextForkEpoch.String()).Str("attnets", hex.EncodeToString(attnets.Raw[:])).Int("att_number", attnets.NetNumber).Str("enr", node.String()).Msg("Eth node found")
+			log.Info().
+				Str("node_id", id.String()).
+				Str("ip", ip.String()).
+				Int("udp", udp).Int("tcp", tcp).
+				Str("fork_digest", eth2Data.ForkDigest.String()).
+				Str("fork_epoch", eth2Data.NextForkEpoch.String()).
+				Str("attnets", hex.EncodeToString(attnets.Raw[:])).
+				Int("att_number", attnets.NetNumber).
+				Str("enr", node.String()).
+				Msg("Discovered new node")
 		}
-
-		// logrus.WithFields(logrus.Fields{
-		// 	"node_id":     id,
-		// 	"ip":          ip,
-		// 	"udp":         udp,
-		// 	"tcp":         tcp,
-		// 	"fork_digest": eth2Data.ForkDigest,
-		// 	"fork_epoch":  eth2Data.NextForkEpoch,
-		// 	"attnets":     hex.EncodeToString(attnets.Raw[:]),
-		// 	"att_number":  attnets.NetNumber,
-		// 	"enr":         node.String(),
-		// }).Info("Eth node found")
 	}
 
 	discv5Serv, err := discv5.NewService(ctx, port, discKey, node, bootnodes, enrHandler)
 	if err != nil {
-		return nil, errors.Wrap(err, "unable to generate the discv5 service")
+		return nil, errors.Wrap(err, "Failed to generate the discv5 service")
 	}
 
 	return &Crawler{
@@ -124,11 +115,8 @@ func NewDiscoveryV5(ctx context.Context, dbPath string, port int, forkDigest str
 	}, nil
 }
 
-func (c *Crawler) Run() error {
-	// if duration has not been set, run until Crtl+C
-	c.discv5Service.Run()
-	// otherwise, run it for X time
-
+func (c *Crawler) Start() error {
+	c.discv5Service.Start()
 	return nil
 }
 

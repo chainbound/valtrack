@@ -74,7 +74,7 @@ func NewService(
 	}, nil
 }
 
-func (dv5 *Discv5Service) Run() {
+func (dv5 *Discv5Service) Start() {
 	// convert syncronous RandomNodes into asyc
 
 	for {

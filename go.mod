@@ -8,14 +8,6 @@ require (
 	github.com/pkg/errors v0.9.1
 	github.com/protolambda/zrnt v0.32.2
 	github.com/rs/zerolog v1.32.0
-	github.com/urfave/cli/v2 v2.27.2
-
-)
-
-require (
-	github.com/cpuguy83/go-md2man/v2 v2.0.4 // indirect
-	github.com/russross/blackfriday/v2 v2.1.0 // indirect
-	github.com/xrash/smetrics v0.0.0-20240312152122-5f08fbb34913 // indirect
 )
 
 require (
@@ -46,7 +38,7 @@ require (
 	github.com/protolambda/bls12-381-util v0.1.0 // indirect
 	github.com/protolambda/ztyp v0.2.2 // indirect
 	github.com/shirou/gopsutil v3.21.4-0.20210419000835-c7a38de76ee5+incompatible // indirect
-	github.com/sirupsen/logrus v1.9.0
+	github.com/sirupsen/logrus v1.9.0 // indirect
 	github.com/spacemonkeygo/spacelog v0.0.0-20180420211403-2296661a0572 // indirect
 	github.com/spaolacci/murmur3 v1.1.0 // indirect
 	github.com/syndtr/goleveldb v1.0.1-0.20210819022825-2ae1ddf74ef7 // indirect

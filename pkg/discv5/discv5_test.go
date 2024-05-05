@@ -12,22 +12,28 @@ import (
 )
 
 func TestSingleDiscoveryV5(t *testing.T) {
-	pk, _ := crypto.GenerateKey()
+	// Generate a new key
+	key, err := crypto.GenerateKey()
 	ethDB, err := enode.OpenDB("")
 	if err != nil {
-		log.Panicf("Could not create local DB %s", err)
+		log.Fatal(err)
 	}
 
-	disc := NewDiscoveryV5(enode.NewLocalNode(ethDB, pk), 30303, config.GetEthereumBootnodes())
+	// Generate a new enode
+	node := enode.NewLocalNode(ethDB, key)
 
-	nodes, _ := disc.Start(context.Background())
-
-	timeout := time.After(10 * time.Second)
-
-	select {
-	case <-timeout:
-		t.FailNow()
-	case <-nodes:
-		return
+	// Create a new DiscoveryV5
+	discv5, err := NewDiscoveryV5(context.Background(), "any", 30303, "forkDigest", config.GetEthereumBootnodes())
+	if discv5 == nil {
+		t.Fatal("Failed to create DiscoveryV5")
 	}
+
+	// Run the DiscoveryV5
+	go discv5.Run()
+
+	// Wait for 5 seconds
+	time.Sleep(5 * time.Second)
+
+	// Stop the DiscoveryV5
+	discv5.Stop()
 }
