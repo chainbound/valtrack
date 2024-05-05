@@ -1,33 +1,38 @@
-package discovery
+package cmd
 
 import (
-	"context"
 	"fmt"
 
 	"github.com/chainbound/valtrack/config"
-	"github.com/chainbound/valtrack/discovery/discv5"
-	"github.com/ethereum/go-ethereum/crypto"
-	"github.com/ethereum/go-ethereum/p2p/enode"
+	"github.com/chainbound/valtrack/pkg/crawler"
+	"github.com/urfave/cli/v2"
 )
 
 type Discovery struct {
-	discv5 *discv5.DiscoveryV5
+	discv5 *crawler.Crawler
 }
 
-func NewDiscovery(port int) (*Discovery, error) {
-	pk, _ := crypto.GenerateKey()
-	ethDB, err := enode.OpenDB("")
+var Discovery5 = &cli.Command{
+	Name:   "discv5",
+	Usage:  "crawl Ethereum's public DHT thought the Discovery 5.1 protocol",
+	Action: NewDiscovery,
+}
+
+func NewDiscovery(ctx *cli.Context) (error) {
+	conf := config.DefaultConfig
+
+	crawlr, err := crawler.NewDiscoveryV5(ctx.Context, conf.DBPath, conf.UDP, conf.ForkDigest, config.GetEthereumBootnodes())
+
 	if err != nil {
-		return nil, fmt.Errorf("could not create local DB %w", err)
+		return err
 	}
-
-	disc := discv5.NewDiscoveryV5(enode.NewLocalNode(ethDB, pk), port, config.GetEthereumBootnodes())
-
-	return &Discovery{
-		discv5: disc,
-	}, nil
+	fmt.Println(crawlr.ID())
+	// return &Discovery{
+	// 	discv5: valtrack,
+	// }, nil
+	return crawlr.Run()
 }
 
-func (d *Discovery) Start(ctx context.Context) (<-chan *enode.Node, error) {
-	return d.discv5.Start(ctx)
+func (d *Discovery) Start() {
+	d.discv5.Run()
 }
