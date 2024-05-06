@@ -4,32 +4,60 @@ import (
 	"context"
 	"crypto/ecdsa"
 	"errors"
+	"fmt"
 	"net"
+	"sync"
 
+	"github.com/chainbound/valtrack/log"
+	eth "github.com/chainbound/valtrack/pkg/ethereum"
 	glog "github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/p2p/discover"
 	"github.com/ethereum/go-ethereum/p2p/enode"
+	"github.com/libp2p/go-libp2p-core/peer"
+	ma "github.com/multiformats/go-multiaddr"
+	"github.com/rs/zerolog"
 )
 
-type Discv5Service struct {
+type HostInfo struct {
+	sync.RWMutex
+
+	// AddrInfo
+	ID     peer.ID
+	IP     string
+	Port   int
+	MAddrs []ma.Multiaddr
+
+	Attr map[string]interface{}
+}
+
+type DiscoveryV5 struct {
 	ctx context.Context
 
 	ethNode     *enode.LocalNode
-	dv5Listener *discover.UDPv5
-	iterator    enode.Iterator
-	enrHandler  func(*enode.Node)
+	Dv5Listener *discover.UDPv5
+	Iterator    enode.Iterator
+
+	nodeNotC chan *HostInfo
+	wg       sync.WaitGroup
+
+	FilterDigest string
+	log          zerolog.Logger
 }
 
-func NewService(
+func NewDiscoveryV5(
 	ctx context.Context,
 	port int,
-	privkey *ecdsa.PrivateKey,
+	discKey *ecdsa.PrivateKey,
 	ethNode *enode.LocalNode,
-	bootnodes []*enode.Node,
-	enrHandler func(*enode.Node)) (*Discv5Service, error) {
+	forkDigest string,
+	bootnodes []*enode.Node) (*DiscoveryV5, error) {
+	// New geth logger at debug level
+	gethlog := glog.New()
+
+	log := log.NewLogger("discv5")
 
 	if len(bootnodes) == 0 {
-		return nil, errors.New("unable to start dv5 peer discovery, no bootnodes provided")
+		return nil, errors.New("No bootnodes provided")
 	}
 
 	// udp address to listen
@@ -38,56 +66,163 @@ func NewService(
 		Port: port,
 	}
 
-	// start listening and create a connection object
-	conn, err := net.ListenUDP("udp", udpAddr)
-	if err != nil {
-		return nil, err
-	}
-
-	// Set custom logger for the discovery5 service (Debug)
-	gethLog := glog.New()
-
-	// configuration of the discovery5
 	cfg := discover.Config{
-		PrivateKey:   privkey,
+		PrivateKey:   discKey,
 		NetRestrict:  nil,
+		Unhandled:    nil,
 		Bootnodes:    bootnodes,
-		Unhandled:    nil, // Not used in dv5
-		Log:          gethLog,
+		Log:          gethlog,
 		ValidSchemes: enode.ValidSchemes,
 	}
 
-	// start the discovery5 service and listen using the given connection
-	dv5Listener, err := discover.ListenV5(conn, ethNode, cfg)
+	// start listening and create a connection object
+	conn, err := net.ListenUDP("udp", udpAddr)
 	if err != nil {
-		return nil, err
+		log.Panic().Err(err).Msg("Failed to listen on UDP")
 	}
 
-	iterator := dv5Listener.RandomNodes()
+	listener, err := discover.ListenV5(conn, ethNode, cfg)
+	if err != nil {
+		log.Panic().Err(err).Msg("Failed to start discv5 listener")
+	}
 
-	return &Discv5Service{
-		ctx:         ctx,
-		ethNode:     ethNode,
-		dv5Listener: dv5Listener,
-		iterator:    iterator,
-		enrHandler:  enrHandler,
+	Iterator := listener.RandomNodes()
+
+	return &DiscoveryV5{
+		ctx:          ctx,
+		ethNode:      ethNode,
+		Dv5Listener:  listener,
+		Iterator:     Iterator,
+		nodeNotC:     make(chan *HostInfo),
+		FilterDigest: forkDigest,
+		log:          log,
 	}, nil
 }
 
-func (dv5 *Discv5Service) Start() {
-	// convert syncronous RandomNodes into asyc
+// Start
+func (d *DiscoveryV5) Start() (chan *HostInfo, error) {
+	// Start iterating over randomly discovered nodes
+	d.Iterator = d.Dv5Listener.RandomNodes()
 
-	for {
-		// check if the context is still up
-		if err := dv5.ctx.Err(); err != nil {
-			break
+	go func() {
+		for d.Iterator.Next() {
+			node := d.Iterator.Node()
+
+			hInfo, err := d.handleENR(node)
+			if err != nil {
+				d.log.Error().Err(err).Msg("Error handling new ENR")
+				continue
+			} else if hInfo != nil {
+				d.log.Info().Str("ID", hInfo.ID.String()).Str("IP", hInfo.IP).Int("Port", hInfo.Port).Str("ENR", node.String()).Msg("Discovered new node")
+			}
+
+			d.nodeNotC <- hInfo
 		}
+	}()
 
-		if dv5.iterator.Next() {
-			newNode := dv5.iterator.Node()
+	return d.nodeNotC, nil
+}
 
-			dv5.enrHandler(newNode)
-		}
+// handleENR parses and identifies all the advertised fields of a newly discovered peer
+func (d *DiscoveryV5) handleENR(node *enode.Node) (*HostInfo, error) {
+	// Parse ENR
+	enr, err := eth.ParseEnr(node)
+	if err != nil {
+		// return nil, errors.Wrap(err, "unable to parse new discovered ENR")
+	}
+
+	if enr.Eth2Data.ForkDigest.String() != d.FilterDigest {
+		d.log.Debug().Str("fork_digest", enr.Eth2Data.ForkDigest.String()).Msg("Fork digest does not match")
+		return nil, nil
+		// return nil, errors.New("Node is on different fork")
 
 	}
+
+	// Generate the peer ID from the pubkey
+	peerID, err := enr.GetPeerID()
+	if err != nil {
+		// return &HostInfo{}, errors.Wrap(err, "unable to convert Geth pubkey to Libp2p")
+		// d.log.Error().Err(err).Msg("unable to convert Geth pubkey to Libp2p")
+		return &HostInfo{}, err
+	}
+	// gen the HostInfo
+	hInfo := NewHostInfo(
+		peerID,
+		WithIPAndPorts(
+			enr.IP.String(),
+			enr.TCP,
+		),
+	)
+	// add the enr as an attribute
+	hInfo.AddAtt(eth.EnrHostInfoAttribute, enr)
+	return hInfo, nil
 }
+
+func (h *HostInfo) AddAtt(key string, attr interface{}) {
+	h.Lock()
+	defer h.Unlock()
+
+	h.Attr[key] = attr
+}
+
+func WithIPAndPorts(ip string, port int) RemoteHostOptions {
+	return func(h *HostInfo) error {
+		h.Lock()
+		defer h.Unlock()
+
+		h.IP = ip
+		h.Port = port
+
+		// Compose Multiaddress from data
+		mAddr, err := ma.NewMultiaddr(fmt.Sprintf("/ip4/%s/tcp/%d", ip, port))
+		if err != nil {
+			return err
+		}
+		// add single address to the HostInfo
+		h.MAddrs = append(h.MAddrs, mAddr)
+		return nil
+	}
+}
+
+type RemoteHostOptions func(*HostInfo) error
+
+// NewHostInfo returns a new structure of the PeerInfo field for the specific network passed as argk
+func NewHostInfo(peerID peer.ID, opts ...RemoteHostOptions) *HostInfo {
+	hInfo := &HostInfo{
+		ID:     peerID,
+		MAddrs: make([]ma.Multiaddr, 0),
+		Attr:   make(map[string]interface{}),
+	}
+
+	// apply all the Options
+	for _, opt := range opts {
+		err := opt(hInfo)
+		if err != nil {
+			// log.("unable to init HostInfo with folling Option", opt)
+		}
+	}
+
+	return hInfo
+}
+
+/*
+func (d *DiscoveryV5) nodeIterator() {
+	defer d.wg.Done()
+
+	for {
+		if d.Iterator.Next() {
+			// fill the given DiscoveredPeer interface with the next found peer
+			node := d.Iterator.Node()
+
+			hInfo, err := d.handleENR(node)
+			if err != nil {
+				d.log.Error().Err(err).Msg("error handling new ENR")
+				continue
+			}
+
+			d.log.Info().Str("enr", node.String()).Str("node_id", node.ID().String()).Msg("new ENR discovered")
+			d.nodeNotC <- hInfo
+		}
+	}
+}
+*/

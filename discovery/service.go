@@ -4,21 +4,46 @@ import (
 	"context"
 
 	"github.com/chainbound/valtrack/config"
-	"github.com/chainbound/valtrack/pkg/crawler"
+	"github.com/chainbound/valtrack/pkg/discv5"
+	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/ethereum/go-ethereum/p2p/enode"
+	"github.com/pkg/errors"
 )
 
 type Discovery struct {
-	discv5 *crawler.Crawler
+	ctx    context.Context
+	discv5 *discv5.DiscoveryV5
 }
 
-func NewDiscovery(ctx context.Context) error {
+func NewDiscovery(ctx context.Context) (*Discovery, error) {
 	conf := config.DefaultConfig
 
-	crawlr, err := crawler.NewDiscoveryV5(ctx, conf.DBPath, conf.UDP, conf.ForkDigest, config.GetEthereumBootnodes())
-
+	discKey, err := crypto.GenerateKey()
 	if err != nil {
-		return err
+		return nil, errors.Wrap(err, "Failed to generate discv5 key")
 	}
 
-	return crawlr.Start()
+	// Init the ethereum peerstore
+	enodeDB, err := enode.OpenDB(conf.DBPath)
+	if err != nil {
+		return nil, errors.Wrap(err, "Failed to open the DB")
+	}
+
+	// Generate a Enode with custom ENR
+	ethNode := enode.NewLocalNode(enodeDB, discKey)
+
+	discv5Serv, err := discv5.NewDiscoveryV5(ctx, conf.UDP, discKey, ethNode, conf.ForkDigest, config.GetEthereumBootnodes())
+
+	if err != nil {
+		return nil, errors.Wrap(err, "Failed to generate the discv5 service")
+	}
+
+	return &Discovery{
+		ctx:    ctx,
+		discv5: discv5Serv,
+	}, nil
+}
+
+func (d *Discovery) Start() (chan *discv5.HostInfo, error) {
+	return d.discv5.Start()
 }

@@ -10,8 +10,16 @@ import (
 func main() {
 	fmt.Println("Starting Valtrack")
 
-	err := discovery.NewDiscovery(context.Background())
+	disc, err := discovery.NewDiscovery(context.Background())
 	if err != nil {
 		panic(err)
+	}
+
+	nodes, err := disc.Start()
+	if err != nil {
+		panic(err)
+	}
+
+	for range nodes {
 	}
 }
