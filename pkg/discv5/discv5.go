@@ -31,15 +31,8 @@ type HostInfo struct {
 }
 
 type DiscoveryV5 struct {
-	ctx context.Context
-
-	ethNode     *enode.LocalNode
-	Dv5Listener *discover.UDPv5
-	Iterator    enode.Iterator
-
-	nodeNotC chan *HostInfo
-	wg       sync.WaitGroup
-
+	ctx          context.Context
+	Dv5Listener  *discover.UDPv5
 	FilterDigest string
 	log          zerolog.Logger
 }
@@ -86,14 +79,9 @@ func NewDiscoveryV5(
 		log.Panic().Err(err).Msg("Failed to start discv5 listener")
 	}
 
-	Iterator := listener.RandomNodes()
-
 	return &DiscoveryV5{
 		ctx:          ctx,
-		ethNode:      ethNode,
 		Dv5Listener:  listener,
-		Iterator:     Iterator,
-		nodeNotC:     make(chan *HostInfo),
 		FilterDigest: forkDigest,
 		log:          log,
 	}, nil
@@ -101,26 +89,30 @@ func NewDiscoveryV5(
 
 // Start
 func (d *DiscoveryV5) Start() (chan *HostInfo, error) {
+	d.log.Info().Msg("Starting discv5 listener")
+
+	ch := make(chan *HostInfo)
+
 	// Start iterating over randomly discovered nodes
-	d.Iterator = d.Dv5Listener.RandomNodes()
+	iter := d.Dv5Listener.RandomNodes()
 
 	go func() {
-		for d.Iterator.Next() {
-			node := d.Iterator.Node()
+		for iter.Next() {
+			node := iter.Node()
 
 			hInfo, err := d.handleENR(node)
 			if err != nil {
 				d.log.Error().Err(err).Msg("Error handling new ENR")
 				continue
 			} else if hInfo != nil {
-				d.log.Info().Str("ID", hInfo.ID.String()).Str("IP", hInfo.IP).Int("Port", hInfo.Port).Str("ENR", node.String()).Msg("Discovered new node")
+				d.log.Info().Str("ID", hInfo.ID.String()).Str("IP", hInfo.IP).Int("Port", hInfo.Port).Str("ENR", node.String()).Any("Maddr", hInfo.MAddrs).Msg("Discovered new node")
 			}
 
-			d.nodeNotC <- hInfo
+			ch <- hInfo
 		}
 	}()
 
-	return d.nodeNotC, nil
+	return ch, nil
 }
 
 // handleENR parses and identifies all the advertised fields of a newly discovered peer
