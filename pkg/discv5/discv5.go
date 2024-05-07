@@ -3,19 +3,21 @@ package discv5
 import (
 	"context"
 	"crypto/ecdsa"
-	"errors"
+	"encoding/hex"
 	"fmt"
 	"net"
 	"sync"
 
 	"github.com/chainbound/valtrack/log"
+	"github.com/rs/zerolog"
+
 	eth "github.com/chainbound/valtrack/pkg/ethereum"
 	glog "github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/p2p/discover"
 	"github.com/ethereum/go-ethereum/p2p/enode"
 	"github.com/libp2p/go-libp2p-core/peer"
 	ma "github.com/multiformats/go-multiaddr"
-	"github.com/rs/zerolog"
+	"github.com/pkg/errors"
 )
 
 type HostInfo struct {
@@ -69,12 +71,12 @@ func NewDiscoveryV5(
 	// start listening and create a connection object
 	conn, err := net.ListenUDP("udp", udpAddr)
 	if err != nil {
-		log.Panic().Err(err).Msg("Failed to listen on UDP")
+		return nil, errors.Wrap(err, "Failed to listen on UDP")
 	}
 
 	listener, err := discover.ListenV5(conn, ethNode, cfg)
 	if err != nil {
-		log.Panic().Err(err).Msg("Failed to start discv5 listener")
+		return nil, errors.Wrap(err, "Failed to start discv5 listener")
 	}
 
 	return &DiscoveryV5{
@@ -102,7 +104,15 @@ func (d *DiscoveryV5) Start(ctx context.Context) (chan *HostInfo, error) {
 				d.log.Error().Err(err).Msg("Error handling new ENR")
 				continue
 			} else if hInfo != nil {
-				d.log.Info().Str("ID", hInfo.ID.String()).Str("IP", hInfo.IP).Int("Port", hInfo.Port).Str("ENR", node.String()).Any("Maddr", hInfo.MAddrs).Msg("Discovered new node")
+				d.log.Info().
+					Str("ID", hInfo.ID.String()).
+					Str("IP", hInfo.IP).
+					Int("Port", hInfo.Port).
+					Str("ENR", node.String()).
+					Any("Maddr", hInfo.MAddrs).
+					Any("Attnets", hInfo.Attr[eth.EnrAttnetsAttribute]).
+					Any("AttnetsNum", hInfo.Attr[eth.EnrAttnetsNumAttribute]).
+					Msg("Discovered new node")
 			}
 
 			ch <- hInfo
@@ -117,22 +127,18 @@ func (d *DiscoveryV5) handleENR(node *enode.Node) (*HostInfo, error) {
 	// Parse ENR
 	enr, err := eth.ParseEnr(node)
 	if err != nil {
-		// return nil, errors.Wrap(err, "unable to parse new discovered ENR")
+		return nil, errors.Wrap(err, "unable to parse new discovered ENR")
 	}
 
 	if enr.Eth2Data.ForkDigest.String() != d.FilterDigest {
 		d.log.Debug().Str("fork_digest", enr.Eth2Data.ForkDigest.String()).Msg("Fork digest does not match")
 		return nil, nil
-		// return nil, errors.New("Node is on different fork")
-
 	}
 
 	// Generate the peer ID from the pubkey
 	peerID, err := enr.GetPeerID()
 	if err != nil {
-		// return &HostInfo{}, errors.Wrap(err, "unable to convert Geth pubkey to Libp2p")
-		// d.log.Error().Err(err).Msg("unable to convert Geth pubkey to Libp2p")
-		return &HostInfo{}, err
+		return &HostInfo{}, errors.Wrap(err, "unable to convert Geth pubkey to Libp2p")
 	}
 	// gen the HostInfo
 	hInfo := NewHostInfo(
@@ -142,8 +148,10 @@ func (d *DiscoveryV5) handleENR(node *enode.Node) (*HostInfo, error) {
 			enr.TCP,
 		),
 	)
-	// add the enr as an attribute
+	// Add ENR and attnets as an attribute
 	hInfo.AddAtt(eth.EnrHostInfoAttribute, enr)
+	hInfo.AddAtt(eth.EnrAttnetsAttribute, hex.EncodeToString(enr.Attnets.Raw[:]))
+	hInfo.AddAtt(eth.EnrAttnetsNumAttribute, enr.Attnets.NetNumber)
 	return hInfo, nil
 }
 
@@ -187,31 +195,9 @@ func NewHostInfo(peerID peer.ID, opts ...RemoteHostOptions) *HostInfo {
 	for _, opt := range opts {
 		err := opt(hInfo)
 		if err != nil {
-			// log.("unable to init HostInfo with folling Option", opt)
+			fmt.Println("Unable to init HostInfo with folling Option", opt)
 		}
 	}
 
 	return hInfo
 }
-
-/*
-func (d *DiscoveryV5) nodeIterator() {
-	defer d.wg.Done()
-
-	for {
-		if d.Iterator.Next() {
-			// fill the given DiscoveredPeer interface with the next found peer
-			node := d.Iterator.Node()
-
-			hInfo, err := d.handleENR(node)
-			if err != nil {
-				d.log.Error().Err(err).Msg("error handling new ENR")
-				continue
-			}
-
-			d.log.Info().Str("enr", node.String()).Str("node_id", node.ID().String()).Msg("new ENR discovered")
-			d.nodeNotC <- hInfo
-		}
-	}
-}
-*/

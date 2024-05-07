@@ -1,4 +1,4 @@
-// Code by Migalabs - Armiarma
+// Initial code taken from Armiarma by Migalabs
 package ethereum
 
 import (
@@ -25,7 +25,9 @@ var (
 )
 
 var (
-	EnrHostInfoAttribute string = "enr-info"
+	EnrHostInfoAttribute   string = "enr-info"
+	EnrAttnetsAttribute    string = "enr-attnets"
+	EnrAttnetsNumAttribute string = "enr-att-num"
 )
 
 type EnrNode struct {
