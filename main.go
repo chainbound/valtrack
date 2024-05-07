@@ -7,12 +7,12 @@ import (
 )
 
 func main() {
-	disc, err := discovery.NewDiscovery(context.Background())
+	disc, err := discovery.NewDiscovery()
 	if err != nil {
 		panic(err)
 	}
 
-	nodes, err := disc.Start()
+	nodes, err := disc.Start(context.Background())
 	if err != nil {
 		panic(err)
 	}

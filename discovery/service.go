@@ -11,11 +11,10 @@ import (
 )
 
 type Discovery struct {
-	ctx    context.Context
 	discv5 *discv5.DiscoveryV5
 }
 
-func NewDiscovery(ctx context.Context) (*Discovery, error) {
+func NewDiscovery() (*Discovery, error) {
 	conf := config.DefaultConfig
 
 	discKey, err := crypto.GenerateKey()
@@ -32,18 +31,17 @@ func NewDiscovery(ctx context.Context) (*Discovery, error) {
 	// Generate a Enode with custom ENR
 	ethNode := enode.NewLocalNode(enodeDB, discKey)
 
-	disc, err := discv5.NewDiscoveryV5(ctx, conf.UDP, discKey, ethNode, conf.ForkDigest, config.GetEthereumBootnodes())
+	disc, err := discv5.NewDiscoveryV5(conf.UDP, discKey, ethNode, conf.ForkDigest, config.GetEthereumBootnodes())
 
 	if err != nil {
 		return nil, errors.Wrap(err, "Failed to generate the discv5 service")
 	}
 
 	return &Discovery{
-		ctx:    ctx,
 		discv5: disc,
 	}, nil
 }
 
-func (d *Discovery) Start() (chan *discv5.HostInfo, error) {
-	return d.discv5.Start()
+func (d *Discovery) Start(ctx context.Context) (chan *discv5.HostInfo, error) {
+	return d.discv5.Start(ctx)
 }

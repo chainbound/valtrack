@@ -31,14 +31,12 @@ type HostInfo struct {
 }
 
 type DiscoveryV5 struct {
-	ctx          context.Context
 	Dv5Listener  *discover.UDPv5
 	FilterDigest string
 	log          zerolog.Logger
 }
 
 func NewDiscoveryV5(
-	ctx context.Context,
 	port int,
 	discKey *ecdsa.PrivateKey,
 	ethNode *enode.LocalNode,
@@ -80,7 +78,6 @@ func NewDiscoveryV5(
 	}
 
 	return &DiscoveryV5{
-		ctx:          ctx,
 		Dv5Listener:  listener,
 		FilterDigest: forkDigest,
 		log:          log,
@@ -88,7 +85,7 @@ func NewDiscoveryV5(
 }
 
 // Start
-func (d *DiscoveryV5) Start() (chan *HostInfo, error) {
+func (d *DiscoveryV5) Start(ctx context.Context) (chan *HostInfo, error) {
 	d.log.Info().Msg("Starting discv5 listener")
 
 	ch := make(chan *HostInfo)
