@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net"
+	"os"
 	"sync"
 
 	"github.com/chainbound/valtrack/log"
@@ -36,6 +37,8 @@ type DiscoveryV5 struct {
 	Dv5Listener  *discover.UDPv5
 	FilterDigest string
 	log          zerolog.Logger
+	seenNodes    map[peer.ID]bool
+	fileLogger   *os.File
 }
 
 func NewDiscoveryV5(
@@ -43,6 +46,7 @@ func NewDiscoveryV5(
 	discKey *ecdsa.PrivateKey,
 	ethNode *enode.LocalNode,
 	forkDigest string,
+	LogPath string,
 	bootnodes []*enode.Node) (*DiscoveryV5, error) {
 	// New geth logger at debug level
 	gethlog := glog.New()
@@ -79,10 +83,17 @@ func NewDiscoveryV5(
 		return nil, errors.Wrap(err, "Failed to start discv5 listener")
 	}
 
+	file, err := os.Create(LogPath)
+	if err != nil {
+		return nil, errors.Wrap(err, "Failed to create log file")
+	}
+
 	return &DiscoveryV5{
 		Dv5Listener:  listener,
 		FilterDigest: forkDigest,
 		log:          log,
+		seenNodes:    make(map[peer.ID]bool),
+		fileLogger:   file,
 	}, nil
 }
 
@@ -96,6 +107,8 @@ func (d *DiscoveryV5) Start(ctx context.Context) (chan *HostInfo, error) {
 	iter := d.Dv5Listener.RandomNodes()
 
 	go func() {
+		defer d.fileLogger.Close()
+
 		for iter.Next() {
 			node := iter.Node()
 
@@ -103,7 +116,9 @@ func (d *DiscoveryV5) Start(ctx context.Context) (chan *HostInfo, error) {
 			if err != nil {
 				d.log.Error().Err(err).Msg("Error handling new ENR")
 				continue
-			} else if hInfo != nil {
+			}
+
+			if hInfo != nil && !d.seenNodes[hInfo.ID] {
 				d.log.Info().
 					Str("ID", hInfo.ID.String()).
 					Str("IP", hInfo.IP).
@@ -113,6 +128,13 @@ func (d *DiscoveryV5) Start(ctx context.Context) (chan *HostInfo, error) {
 					Any("Attnets", hInfo.Attr[eth.EnrAttnetsAttribute]).
 					Any("AttnetsNum", hInfo.Attr[eth.EnrAttnetsNumAttribute]).
 					Msg("Discovered new node")
+
+				// Log to file
+				fmt.Fprintf(d.fileLogger, "ID: %s, IP: %s, Port: %d, ENR: %s, Maddr: %v, Attnets: %v, AttnetsNum: %v\n",
+					hInfo.ID.String(), hInfo.IP, hInfo.Port, node.String(), hInfo.MAddrs, hInfo.Attr[eth.EnrAttnetsAttribute], hInfo.Attr[eth.EnrAttnetsNumAttribute])
+
+				// Mark node as seen
+				d.seenNodes[hInfo.ID] = true
 			}
 
 			ch <- hInfo

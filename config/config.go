@@ -43,6 +43,7 @@ type Config struct {
 	TCP        int
 	DBPath     string
 	ForkDigest string
+	LogPath    string
 }
 
 var DefaultConfig Config = Config{
@@ -51,4 +52,5 @@ var DefaultConfig Config = Config{
 	TCP:        9001,
 	DBPath:     "peerstore.db",
 	ForkDigest: "0x6a95a1a9",
+	LogPath:    "nodes.log",
 }

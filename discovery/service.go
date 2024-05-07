@@ -31,7 +31,7 @@ func NewDiscovery() (*Discovery, error) {
 	// Generate a Enode with custom ENR
 	ethNode := enode.NewLocalNode(enodeDB, discKey)
 
-	disc, err := discv5.NewDiscoveryV5(conf.UDP, discKey, ethNode, conf.ForkDigest, config.GetEthereumBootnodes())
+	disc, err := discv5.NewDiscoveryV5(conf.UDP, discKey, ethNode, conf.ForkDigest, conf.LogPath, config.GetEthereumBootnodes())
 
 	if err != nil {
 		return nil, errors.Wrap(err, "Failed to generate the discv5 service")
