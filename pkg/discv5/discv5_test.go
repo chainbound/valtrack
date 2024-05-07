@@ -11,30 +11,27 @@ import (
 	"github.com/ethereum/go-ethereum/p2p/enode"
 )
 
-// TODO: Implement the test
 func TestSingleDiscoveryV5(t *testing.T) {
-	// Generate a new key
-	key, err := crypto.GenerateKey()
+	pk, _ := crypto.GenerateKey()
 	ethDB, err := enode.OpenDB("")
 	if err != nil {
-		log.Fatal(err)
+		log.Panicf("Could not create local DB %s", err)
 	}
 
-	// Generate a new enode
-	node := enode.NewLocalNode(ethDB, key)
+	disc, err := NewDiscoveryV5(30303, pk, enode.NewLocalNode(ethDB, pk), "0x6a95a1a9", config.GetEthereumBootnodes())
 
-	// Create a new DiscoveryV5
-	discv5, err := NewDiscoveryV5(context.Background(), "any", 30303, "forkDigest", config.GetEthereumBootnodes())
-	if discv5 == nil {
-		t.Fatal("Failed to create DiscoveryV5")
+	if err != nil {
+		t.FailNow()
 	}
 
-	// Run the DiscoveryV5
-	go discv5.Run()
+	nodes, _ := disc.Start(context.Background())
 
-	// Wait for 5 seconds
-	time.Sleep(5 * time.Second)
+	timeout := time.After(10 * time.Second)
 
-	// Stop the DiscoveryV5
-	discv5.Stop()
+	select {
+	case <-timeout:
+		t.FailNow()
+	case <-nodes:
+		return
+	}
 }
