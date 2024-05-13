@@ -10,13 +10,13 @@ import (
 	"sync"
 
 	"github.com/chainbound/valtrack/log"
+	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/rs/zerolog"
 
 	eth "github.com/chainbound/valtrack/pkg/ethereum"
 	glog "github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/p2p/discover"
 	"github.com/ethereum/go-ethereum/p2p/enode"
-	"github.com/libp2p/go-libp2p-core/peer"
 	ma "github.com/multiformats/go-multiaddr"
 	"github.com/pkg/errors"
 )
@@ -46,7 +46,7 @@ func NewDiscoveryV5(
 	discKey *ecdsa.PrivateKey,
 	ethNode *enode.LocalNode,
 	forkDigest string,
-	LogPath string,
+	logPath string,
 	bootnodes []*enode.Node) (*DiscoveryV5, error) {
 	// New geth logger at debug level
 	gethlog := glog.New()
@@ -83,7 +83,7 @@ func NewDiscoveryV5(
 		return nil, errors.Wrap(err, "Failed to start discv5 listener")
 	}
 
-	file, err := os.Create(LogPath)
+	file, err := os.Create(logPath)
 	if err != nil {
 		return nil, errors.Wrap(err, "Failed to create log file")
 	}

@@ -18,7 +18,7 @@ func TestSingleDiscoveryV5(t *testing.T) {
 		log.Panicf("Could not create local DB %s", err)
 	}
 
-	disc, err := NewDiscoveryV5(30303, pk, enode.NewLocalNode(ethDB, pk), "0x6a95a1a9", ".", config.GetEthereumBootnodes())
+	disc, err := NewDiscoveryV5(30303, pk, enode.NewLocalNode(ethDB, pk), "0x6a95a1a9", "nodes.log", config.GetEthereumBootnodes())
 
 	if err != nil {
 		t.FailNow()
