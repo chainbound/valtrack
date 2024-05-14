@@ -9,6 +9,7 @@ import (
 	"os"
 	"sync"
 
+	"github.com/chainbound/valtrack/config"
 	"github.com/chainbound/valtrack/log"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/rs/zerolog"
@@ -41,33 +42,35 @@ type DiscoveryV5 struct {
 	fileLogger   *os.File
 }
 
-func NewDiscoveryV5(
-	port int,
-	discKey *ecdsa.PrivateKey,
-	ethNode *enode.LocalNode,
-	forkDigest string,
-	logPath string,
-	bootnodes []*enode.Node) (*DiscoveryV5, error) {
+func NewDiscoveryV5(pk *ecdsa.PrivateKey, discConfig *config.DiscConfig) (*DiscoveryV5, error) {
 	// New geth logger at debug level
 	gethlog := glog.New()
-
 	log := log.NewLogger("discv5")
 
-	if len(bootnodes) == 0 {
+	// Init the ethereum peerstore
+	enodeDB, err := enode.OpenDB(discConfig.DBPath)
+	if err != nil {
+		return nil, errors.Wrap(err, "Failed to open the DB")
+	}
+
+	// Generate a Enode with custom ENR
+	ethNode := enode.NewLocalNode(enodeDB, pk)
+
+	if len(discConfig.Bootnodes) == 0 {
 		return nil, errors.New("No bootnodes provided")
 	}
 
 	// udp address to listen
 	udpAddr := &net.UDPAddr{
 		IP:   net.IPv4zero,
-		Port: port,
+		Port: discConfig.UDP,
 	}
 
 	cfg := discover.Config{
-		PrivateKey:   discKey,
+		PrivateKey:   pk,
 		NetRestrict:  nil,
 		Unhandled:    nil,
-		Bootnodes:    bootnodes,
+		Bootnodes:    discConfig.Bootnodes,
 		Log:          gethlog,
 		ValidSchemes: enode.ValidSchemes,
 	}
@@ -83,14 +86,14 @@ func NewDiscoveryV5(
 		return nil, errors.Wrap(err, "Failed to start discv5 listener")
 	}
 
-	file, err := os.Create(logPath)
+	file, err := os.Create(discConfig.LogPath)
 	if err != nil {
 		return nil, errors.Wrap(err, "Failed to create log file")
 	}
 
 	return &DiscoveryV5{
 		Dv5Listener:  listener,
-		FilterDigest: forkDigest,
+		FilterDigest: discConfig.ForkDigest,
 		log:          log,
 		seenNodes:    make(map[peer.ID]bool),
 		fileLogger:   file,

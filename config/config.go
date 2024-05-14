@@ -37,20 +37,22 @@ func GetEthereumBootnodes() []*enode.Node {
 	return bootnodes
 }
 
-type Config struct {
+type DiscConfig struct {
 	IP         string
 	UDP        int
 	TCP        int
 	DBPath     string
 	ForkDigest string
 	LogPath    string
+	Bootnodes  []*enode.Node
 }
 
-var DefaultConfig Config = Config{
+var DefaultConfig DiscConfig = DiscConfig{
 	IP:         "0.0.0.0",
 	UDP:        9001,
 	TCP:        9001,
-	DBPath:     "peerstore.db",
+	DBPath:     "",
 	ForkDigest: "0x6a95a1a9",
 	LogPath:    "nodes.log",
+	Bootnodes:  GetEthereumBootnodes(),
 }
