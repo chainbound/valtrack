@@ -1,4 +1,4 @@
-package discv5
+package ethereum
 
 import (
 	"context"
@@ -8,13 +8,13 @@ import (
 	"net"
 	"os"
 	"sync"
+	"time"
 
 	"github.com/chainbound/valtrack/config"
 	"github.com/chainbound/valtrack/log"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/rs/zerolog"
 
-	eth "github.com/chainbound/valtrack/pkg/ethereum"
 	glog "github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/p2p/discover"
 	"github.com/ethereum/go-ethereum/p2p/enode"
@@ -40,6 +40,7 @@ type DiscoveryV5 struct {
 	log          zerolog.Logger
 	seenNodes    map[peer.ID]bool
 	fileLogger   *os.File
+	out          chan peer.AddrInfo
 }
 
 func NewDiscoveryV5(pk *ecdsa.PrivateKey, discConfig *config.DiscConfig) (*DiscoveryV5, error) {
@@ -97,60 +98,71 @@ func NewDiscoveryV5(pk *ecdsa.PrivateKey, discConfig *config.DiscConfig) (*Disco
 		log:          log,
 		seenNodes:    make(map[peer.ID]bool),
 		fileLogger:   file,
+		out:          make(chan peer.AddrInfo),
 	}, nil
 }
 
-// Start
-func (d *DiscoveryV5) Start(ctx context.Context) (chan *HostInfo, error) {
+func (d *DiscoveryV5) Serve(ctx context.Context) error {
 	d.log.Info().Msg("Starting discv5 listener")
-
-	ch := make(chan *HostInfo)
 
 	// Start iterating over randomly discovered nodes
 	iter := d.Dv5Listener.RandomNodes()
+
+	defer iter.Close()
+	defer close(d.out)
 
 	go func() {
 		defer d.fileLogger.Close()
 
 		for iter.Next() {
-			node := iter.Node()
+			select {
+			case <-ctx.Done(): // Listen for context cancellation
+				d.log.Info().Msg("Stopping discv5 listener")
+				return // Exit the goroutine when context is cancelled
+			default:
+				if !iter.Next() {
+					return // No more nodes to process, exit the goroutine
+				}
+				node := iter.Node()
+				hInfo, err := d.handleENR(node)
+				if err != nil {
+					d.log.Error().Err(err).Msg("Error handling new ENR")
+					continue
+				}
 
-			hInfo, err := d.handleENR(node)
-			if err != nil {
-				d.log.Error().Err(err).Msg("Error handling new ENR")
-				continue
+				if hInfo != nil && !d.seenNodes[hInfo.ID] {
+					// Log discovered node
+					d.log.Info().
+						Str("ID", hInfo.ID.String()).
+						Str("IP", hInfo.IP).
+						Int("Port", hInfo.Port).
+						Str("ENR", node.String()).
+						Any("Maddr", hInfo.MAddrs).
+						Any("Attnets", hInfo.Attr[EnrAttnetsAttribute]).
+						Any("AttnetsNum", hInfo.Attr[EnrAttnetsNumAttribute]).
+						Msg("Discovered new node")
+
+					// Log to file
+					fmt.Fprintf(d.fileLogger, "%s ID: %s, IP: %s, Port: %d, ENR: %s, Maddr: %v, Attnets: %v, AttnetsNum: %v\n",
+						time.Now().Format(time.RFC3339), hInfo.ID.String(), hInfo.IP, hInfo.Port, node.String(), hInfo.MAddrs, hInfo.Attr[EnrAttnetsAttribute], hInfo.Attr[EnrAttnetsNumAttribute])
+
+					d.out <- peer.AddrInfo{
+						ID:    hInfo.ID,
+						Addrs: hInfo.MAddrs,
+					}
+				}
 			}
-
-			if hInfo != nil && !d.seenNodes[hInfo.ID] {
-				d.log.Info().
-					Str("ID", hInfo.ID.String()).
-					Str("IP", hInfo.IP).
-					Int("Port", hInfo.Port).
-					Str("ENR", node.String()).
-					Any("Maddr", hInfo.MAddrs).
-					Any("Attnets", hInfo.Attr[eth.EnrAttnetsAttribute]).
-					Any("AttnetsNum", hInfo.Attr[eth.EnrAttnetsNumAttribute]).
-					Msg("Discovered new node")
-
-				// Log to file
-				fmt.Fprintf(d.fileLogger, "ID: %s, IP: %s, Port: %d, ENR: %s, Maddr: %v, Attnets: %v, AttnetsNum: %v\n",
-					hInfo.ID.String(), hInfo.IP, hInfo.Port, node.String(), hInfo.MAddrs, hInfo.Attr[eth.EnrAttnetsAttribute], hInfo.Attr[eth.EnrAttnetsNumAttribute])
-
-				// Mark node as seen
-				d.seenNodes[hInfo.ID] = true
-			}
-
-			ch <- hInfo
 		}
 	}()
 
-	return ch, nil
+	<-ctx.Done()     // Block until the context is cancelled
+	return ctx.Err() // Return the context's error
 }
 
 // handleENR parses and identifies all the advertised fields of a newly discovered peer
 func (d *DiscoveryV5) handleENR(node *enode.Node) (*HostInfo, error) {
 	// Parse ENR
-	enr, err := eth.ParseEnr(node)
+	enr, err := ParseEnr(node)
 	if err != nil {
 		return nil, errors.Wrap(err, "unable to parse new discovered ENR")
 	}
@@ -174,9 +186,9 @@ func (d *DiscoveryV5) handleENR(node *enode.Node) (*HostInfo, error) {
 		),
 	)
 	// Add ENR and attnets as an attribute
-	hInfo.AddAtt(eth.EnrHostInfoAttribute, enr)
-	hInfo.AddAtt(eth.EnrAttnetsAttribute, hex.EncodeToString(enr.Attnets.Raw[:]))
-	hInfo.AddAtt(eth.EnrAttnetsNumAttribute, enr.Attnets.NetNumber)
+	hInfo.AddAtt(EnrHostInfoAttribute, enr)
+	hInfo.AddAtt(EnrAttnetsAttribute, hex.EncodeToString(enr.Attnets.Raw[:]))
+	hInfo.AddAtt(EnrAttnetsNumAttribute, enr.Attnets.NetNumber)
 	return hInfo, nil
 }
 

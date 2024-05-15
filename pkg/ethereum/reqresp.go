@@ -6,11 +6,10 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
-	"log/slog"
-	"strconv"
 	"sync"
 	"time"
 
+	"github.com/chainbound/valtrack/log"
 	ssz "github.com/ferranbt/fastssz"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/network"
@@ -21,10 +20,35 @@ import (
 	"github.com/prysmaticlabs/prysm/v5/beacon-chain/p2p/encoder"
 	"github.com/prysmaticlabs/prysm/v5/consensus-types/primitives"
 	pb "github.com/prysmaticlabs/prysm/v5/proto/prysm/v1alpha1"
+	"github.com/rs/zerolog"
 	"golang.org/x/time/rate"
 )
 
 type ContextStreamHandler func(context.Context, network.Stream) error
+
+type ReqRespConfig struct {
+	ForkDigest [4]byte
+	Encoder    encoder.NetworkEncoding
+
+	ReadTimeout  time.Duration
+	WriteTimeout time.Duration
+}
+
+// ReqResp handles request-response operations for the node.
+type ReqResp struct {
+	host     host.Host
+	cfg      *ReqRespConfig
+	delegate peer.ID
+
+	metaData   *pb.MetaDataV1
+	metaDataMu sync.RWMutex
+
+	status    *pb.Status
+	statusMu  sync.RWMutex
+	statusLim *rate.Limiter
+
+	log zerolog.Logger
+}
 
 func NewReqResp(h host.Host, cfg *ReqRespConfig) (*ReqResp, error) {
 	// initialize the request-response protocol handlers
@@ -48,6 +72,7 @@ func NewReqResp(h host.Host, cfg *ReqRespConfig) (*ReqResp, error) {
 		cfg:       cfg,
 		metaData:  md,
 		statusLim: rate.NewLimiter(1, 5),
+		log:       log.NewLogger("reqresp"),
 	}
 
 	var err error
@@ -57,28 +82,6 @@ func NewReqResp(h host.Host, cfg *ReqRespConfig) (*ReqResp, error) {
 	}
 
 	return p, nil
-}
-
-type ReqRespConfig struct {
-	ForkDigest [4]byte
-	Encoder    encoder.NetworkEncoding
-
-	ReadTimeout  time.Duration
-	WriteTimeout time.Duration
-}
-
-// ReqResp handles request-response operations for the node.
-type ReqResp struct {
-	host     host.Host
-	cfg      *ReqRespConfig
-	delegate peer.ID
-
-	metaData   *pb.MetaDataV1
-	metaDataMu sync.RWMutex
-
-	status    *pb.Status
-	statusMu  sync.RWMutex
-	statusLim *rate.Limiter
 }
 
 func (r *ReqResp) protocolID(topic string) protocol.ID {
@@ -123,33 +126,32 @@ func (r *ReqResp) SetStatus(status *pb.Status) {
 		return
 	}
 
-	slog.Info("New status:")
-	slog.Info("  fork_digest: " + hex.EncodeToString(status.ForkDigest))
-	slog.Info("  finalized_root: " + hex.EncodeToString(status.FinalizedRoot))
-	slog.Info("  finalized_epoch: " + strconv.FormatUint(uint64(status.FinalizedEpoch), 10))
-	slog.Info("  head_root: " + hex.EncodeToString(status.HeadRoot))
-	slog.Info("  head_slot: " + strconv.FormatUint(uint64(status.HeadSlot), 10))
+	r.log.Info().
+		Str("ForkDigest", hex.EncodeToString(status.ForkDigest)).
+		Str("FinalizedRoot", hex.EncodeToString(status.FinalizedRoot)).
+		Uint64("FinalizedEpoch", uint64(status.FinalizedEpoch)).
+		Str("HeadRoot", hex.EncodeToString(status.HeadRoot)).
+		Uint64("HeadSlot", uint64(status.HeadSlot)).
+		Msg("Status updated")
 
 	r.status = status
 }
 
 // RegisterHandlers registers all RPC handlers. It verifies that initial status and metadata are valid.
 func (r *ReqResp) RegisterHandlers(ctx context.Context) error {
-	// Check for initial status validity
+	fmt.Println("Registering RPC handlers")
+
 	r.statusMu.RLock()
+	defer r.statusMu.RUnlock()
 	if r.status == nil {
-		r.statusMu.RUnlock()
 		return fmt.Errorf("chain status is nil")
 	}
-	r.statusMu.RUnlock()
 
-	// Check for initial metadata validity
 	r.metaDataMu.RLock()
+	defer r.metaDataMu.RUnlock()
 	if r.metaData == nil {
-		r.metaDataMu.RUnlock()
 		return fmt.Errorf("chain metadata is nil")
 	}
-	r.metaDataMu.RUnlock()
 
 	// Registration of handlers for each protocol
 	r.host.SetStreamHandler(r.protocolID(p2p.RPCPingTopicV1), r.wrapStreamHandler(ctx, p2p.RPCPingTopicV1, r.pingHandler))
@@ -158,14 +160,6 @@ func (r *ReqResp) RegisterHandlers(ctx context.Context) error {
 
 	return nil
 }
-
-// // wrapStreamHandler wraps a ContextStreamHandler to provide additional functionality or logging
-// func (r *ReqResp) wrapStreamHandler(ctx context.Context, protocol string, func(ctx context.Context, stream network.Stream)) network.StreamHandler {
-// 	return func(stream network.Stream) {
-// 		slog.Info("Handling stream for protocol", "protocol", protocol)
-// 		handler(stream)
-// 	}
-// }
 
 func (r *ReqResp) pingHandler(ctx context.Context, stream network.Stream) error {
 	req := primitives.SSZUint64(0) // Assuming a predefined type for demonstration.
@@ -236,7 +230,7 @@ func (r *ReqResp) wrapStreamHandler(ctx context.Context, name string, handler Co
 			agentVersion = "n.a."
 		}
 
-		slog.Debug("Stream Opened", LogAttrPeerID(s.Conn().RemotePeer()), "protocol", s.Protocol(), "agent", agentVersion)
+		r.log.Debug().Any("protocol", s.Protocol()).Str("peer", s.Conn().RemotePeer().String()).Msg("Stream Opened")
 
 		// Ensure the stream is reset on handler exit, which is a no-op if the stream is already closed.
 		defer s.Reset()
@@ -248,7 +242,7 @@ func (r *ReqResp) wrapStreamHandler(ctx context.Context, name string, handler Co
 
 		// Log if there was an error during handling.
 		if err != nil {
-			slog.Debug("failed handling rpc", "protocol", s.Protocol(), LogAttrError(err), LogAttrPeerID(s.Conn().RemotePeer()), "agent", agentVersion)
+			r.log.Debug().Any("protocol", s.Protocol()).Str("peer", s.Conn().RemotePeer().String()).Str("agent", agentVersion).Err(err).Msg("failed handling rpc")
 		}
 
 		// // Construct common data for tracing events.
@@ -259,7 +253,7 @@ func (r *ReqResp) wrapStreamHandler(ctx context.Context, name string, handler Co
 		// 	"Error":      err,
 		// }
 
-		slog.Debug(duration.String())
+		r.log.Debug().Dur("duration", duration).Msg("Stream Closed")
 		// Merge handler-specific trace data into the common trace data map.
 		// for key, value := range traceData {
 		// 	commonData[key] = value

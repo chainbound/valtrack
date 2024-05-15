@@ -15,6 +15,7 @@ require (
 	github.com/prysmaticlabs/go-bitfield v0.0.0-20210809151128-385d8c5e3fb7
 	github.com/prysmaticlabs/prysm/v5 v5.0.3
 	github.com/rs/zerolog v1.32.0
+	github.com/thejerf/suture/v4 v4.0.5
 	golang.org/x/time v0.5.0
 )
 

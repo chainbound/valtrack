@@ -1,6 +1,13 @@
 package config
 
-import "github.com/ethereum/go-ethereum/p2p/enode"
+import (
+	"time"
+
+	"github.com/ethereum/go-ethereum/p2p/enode"
+	"github.com/libp2p/go-libp2p/core/crypto"
+	"github.com/prysmaticlabs/prysm/v5/beacon-chain/p2p/encoder"
+	"github.com/prysmaticlabs/prysm/v5/config/params"
+)
 
 // Bootnodes
 var ethBootnodes []string = []string{
@@ -49,10 +56,20 @@ type DiscConfig struct {
 
 var DefaultConfig DiscConfig = DiscConfig{
 	IP:         "0.0.0.0",
-	UDP:        9001,
-	TCP:        9001,
+	UDP:        0,
+	TCP:        0,
 	DBPath:     "",
 	ForkDigest: "0x6a95a1a9",
 	LogPath:    "nodes.log",
 	Bootnodes:  GetEthereumBootnodes(),
+}
+
+// NodeConfig holds additional configuration options for the node.
+type NodeConfig struct {
+	PrivateKey    *crypto.Secp256k1PrivateKey
+	BeaconConfig  *params.BeaconChainConfig
+	ForkDigest    [4]byte
+	Encoder       encoder.NetworkEncoding
+	DialTimeout   time.Duration
+	PrivateKeyStr string
 }

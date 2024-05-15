@@ -1,4 +1,4 @@
-package discv5
+package ethereum
 
 import (
 	"context"
@@ -18,14 +18,12 @@ func TestSingleDiscoveryV5(t *testing.T) {
 		t.FailNow()
 	}
 
-	nodes, _ := disc.Start(context.Background())
+	_ = disc.Serve(context.Background())
 
 	timeout := time.After(10 * time.Second)
 
 	select {
 	case <-timeout:
 		t.FailNow()
-	case <-nodes:
-		return
 	}
 }

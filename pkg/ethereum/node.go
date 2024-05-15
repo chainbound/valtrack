@@ -2,70 +2,80 @@ package ethereum
 
 import (
 	"context"
-	"crypto/ecdsa"
-	"crypto/rand"
-	"encoding/hex"
 	"fmt"
 	"log/slog"
-	"time"
+	"net"
+	"os"
 
-	"github.com/decred/dcrd/dcrec/secp256k1/v4"
+	"github.com/chainbound/valtrack/config"
+	"github.com/chainbound/valtrack/log"
 	gcrypto "github.com/ethereum/go-ethereum/crypto"
 	"github.com/libp2p/go-libp2p"
 	mplex "github.com/libp2p/go-libp2p-mplex"
-	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/host"
-	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/p2p/security/noise"
 	"github.com/libp2p/go-libp2p/p2p/transport/tcp"
+	ma "github.com/multiformats/go-multiaddr"
+	"github.com/pkg/errors"
 	"github.com/prysmaticlabs/prysm/v5/beacon-chain/p2p/encoder"
-	"github.com/prysmaticlabs/prysm/v5/config/params"
+	eth "github.com/prysmaticlabs/prysm/v5/proto/prysm/v1alpha1"
+	"github.com/rs/zerolog"
+	"github.com/thejerf/suture/v4"
 )
-
-// NodeConfig holds additional configuration options for the node.
-type NodeConfig struct {
-	PrivateKey   *ecdsa.PrivateKey
-	BeaconConfig *params.BeaconChainConfig
-	ForkDigest   [4]byte
-	Encoder      encoder.NetworkEncoding
-	DialTimeout  time.Duration
-}
 
 // Node represents a node in the network with a host and configuration.
 type Node struct {
 	host    host.Host
-	cfg     *NodeConfig
+	cfg     *config.NodeConfig
 	reqResp *ReqResp
+	disc    *DiscoveryV5
+
+	// The suture supervisor that is the root of the service tree
+	sup *suture.Supervisor
+
+	log        zerolog.Logger
+	fileLogger *os.File
+}
+
+// MaddrFrom takes in an ip address string and port to produce a go multiaddr format.
+func MaddrFrom(ip string, port uint) (ma.Multiaddr, error) {
+	parsed := net.ParseIP(ip)
+	if parsed == nil {
+		return nil, fmt.Errorf("invalid IP address: %s", ip)
+	} else if parsed.To4() != nil {
+		return ma.NewMultiaddr(fmt.Sprintf("/ip4/%s/tcp/%d", ip, port))
+	} else if parsed.To16() != nil {
+		return ma.NewMultiaddr(fmt.Sprintf("/ip6/%s/tcp/%d", ip, port))
+	} else {
+		return nil, fmt.Errorf("invalid IP address: %s", ip)
+	}
 }
 
 // NewNode initializes a new Node using the provided configuration and options.
-func NewNode(cfg *NodeConfig) (*Node, error) {
-	var err error
-	var privBytes []byte
+func NewNode(cfg *config.NodeConfig) (*Node, error) {
+	log := log.NewLogger("node")
 
-	slog.Debug("Generating new private key")
-	key, err := ecdsa.GenerateKey(gcrypto.S256(), rand.Reader)
+	file, err := os.Create("handshakes.log")
 	if err != nil {
-		return nil, fmt.Errorf("failed to generate key: %w", err)
+		return nil, errors.Wrap(err, "Failed to create log file")
 	}
 
-	privBytes = gcrypto.FromECDSA(key)
-	if len(privBytes) != secp256k1.PrivKeyBytesLen {
-		return nil, fmt.Errorf("expected secp256k1 data size to be %d", secp256k1.PrivKeyBytesLen)
+	data, err := cfg.PrivateKey.Raw()
+	discKey, _ := gcrypto.ToECDSA(data)
+	if err != nil {
+		return nil, errors.Wrap(err, "Failed to generate discv5 key")
 	}
+	conf := config.DefaultConfig
+	disc, err := NewDiscoveryV5(discKey, &conf)
 
-	privateKey := (*crypto.Secp256k1PrivateKey)(secp256k1.PrivKeyFromBytes(privBytes))
-
-	// rmgr, err := rcmgr.NewResourceManager(rcmgr.NewFixedLimiter(rcmgr.DefaultLimits.AutoScale()), rcmgr.WithTraceReporter(str))
-	// if err != nil {
-	// 	return nil, err
-	// }
+	listenMaddr, err := MaddrFrom("127.0.0.1", 0)
 
 	// Initialize libp2p options, including security, transport, and other protocols
 	opts := []libp2p.Option{
-		libp2p.ListenAddrStrings("/ip4/127.0.0.1/tcp/0"), // Modify as necessary
-		libp2p.Identity(privateKey),
+		// libp2p.ListenAddrStrings("/ip4/127.0.0.1/tcp/0"), // Modify as necessary
+		libp2p.ListenAddrs(listenMaddr), // Modify as necessary
+		libp2p.Identity(cfg.PrivateKey),
 		libp2p.UserAgent("valtrack"),
 		libp2p.Transport(tcp.NewTCPTransport),
 		libp2p.Muxer(mplex.ID, mplex.DefaultTransport),
@@ -85,51 +95,70 @@ func NewNode(cfg *NodeConfig) (*Node, error) {
 
 	// initialize the request-response protocol handlers
 	reqRespCfg := &ReqRespConfig{
-		ForkDigest:   [4]byte{0x6a, 0x95, 0xa1, 0xa9},
+		ForkDigest:   cfg.ForkDigest,
 		Encoder:      encoder.SszNetworkEncoder{},
 		ReadTimeout:  cfg.BeaconConfig.TtfbTimeoutDuration(),
 		WriteTimeout: cfg.BeaconConfig.RespTimeoutDuration(),
 	}
 
 	// Initialize ReqResp
-	reqResp, err := NewReqResp(h, reqRespCfg) // Assume NewReqResp is a constructor for ReqResp
-
+	reqResp, err := NewReqResp(h, reqRespCfg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create reqresp: %w", err)
 	}
 
 	// Log the node's peer ID and addresses
-	slog.Info("Initialized new libp2p Host", LogAttrPeerID(h.ID()), "maddrs", h.Addrs())
+	log.Info().Str("peer_id", h.ID().String()).Any("Maddr", h.Addrs()).Msg("Initialized new libp2p Host")
 
 	// Return the fully initialized Node
 	return &Node{
-		host:    h,
-		cfg:     cfg,
-		reqResp: reqResp,
+		host:       h,
+		cfg:        cfg,
+		reqResp:    reqResp,
+		disc:       disc,
+		sup:        suture.NewSimple("eth"),
+		log:        log,
+		fileLogger: file,
 	}, nil
 }
 
 // Start runs the operational routines of the node, such as network services and handling connections.
 func (n *Node) Start(ctx context.Context) error {
+	status := &eth.Status{
+		ForkDigest:     n.cfg.ForkDigest[:],
+		FinalizedRoot:  make([]byte, 32),
+		FinalizedEpoch: 0,
+		HeadRoot:       make([]byte, 32),
+		HeadSlot:       0,
+	}
+
+	n.reqResp.SetStatus(status)
+
 	// Register stream handlers for various protocols
 	// Set stream handlers on our libp2p host
 	if err := n.reqResp.RegisterHandlers(ctx); err != nil {
 		return fmt.Errorf("register RPC handlers: %w", err)
 	}
-	// Announce node's presence to the network, discover peers, etc.
-	if err := n.discoverPeers(ctx); err != nil {
-		return fmt.Errorf("failed to discover peers: %w", err)
+
+	n.host.Network().Notify(n)
+
+	n.sup.Add(n.disc)
+
+	log := log.NewLogger("peer_dialer")
+	for i := 0; i < 16; i++ {
+		cs := &PeerDialer{
+			host:     n.host,
+			peerChan: n.disc.out,
+			maxPeers: 30,
+			log:      log,
+		}
+		n.sup.Add(cs)
 	}
 
-	// Handle incoming connections (this could be a loop or event-driven)
-	n.host.Network().Notify(&network.NotifyBundle{
-		ConnectedF: func(net network.Network, conn network.Conn) {
-			go n.handleNewConnection(conn.RemotePeer())
-		},
-	})
+	n.log.Info().Msg("Starting node services")
 
-	slog.Info("Node started and listening for connections.")
-	return nil
+	return n.sup.Serve(ctx)
+	// return n.disc.Serve(ctx)
 }
 
 // discoverPeers is a placeholder for peer discovery logic
@@ -145,74 +174,3 @@ func LogAttrPeerID(pid peer.ID) slog.Attr {
 func LogAttrError(err error) slog.Attr {
 	return slog.Attr{Key: "AttrKeyError", Value: slog.AnyValue(err)}
 }
-
-func (n *Node) handleNewConnection(pid peer.ID) {
-	ctx, cancel := context.WithTimeout(context.Background(), n.cfg.DialTimeout)
-	defer cancel()
-
-	valid := true
-
-	st, err := n.reqResp.Status(ctx, pid)
-	if err != nil {
-		valid = false
-		slog.Info("Status check failed: %s", err)
-	} else if err := n.reqResp.Ping(ctx, pid); err != nil {
-		valid = false
-		slog.Info("Ping failed: %s", err)
-	} else if md, err := n.reqResp.MetaData(ctx, pid); err != nil {
-		valid = false
-		slog.Info("Metadata retrieval failed: %s", err)
-	} else {
-		slog.Info("Performed successful handshake with peer %s: SeqNumber %d, Attnets %s, ForkDigest %s\n",
-			pid, md.SeqNumber, hex.EncodeToString(md.Attnets), hex.EncodeToString(st.ForkDigest))
-	}
-
-	if !valid {
-		slog.Info("Handshake failed with peer %s, disconnecting.\n", pid)
-		n.host.Network().ClosePeer(pid)
-	}
-}
-
-// // handleNewConnection validates the newly established connection to the given
-// // peer.
-// func (n *Node) handleNewConnection(pid peer.ID) {
-// 	// before we add the peer to our pool, we'll perform a handshake
-
-// 	ctx, cancel := context.WithTimeout(context.Background(), n.cfg.DialTimeout)
-// 	defer cancel()
-
-// 	valid := true
-// 	ps := n.host.Peerstore()
-
-// 	st, err := n.reqResp.Status(ctx, pid)
-// 	if err != nil {
-// 		valid = false
-// 	} else {
-// 		if err := n.reqResp.Ping(ctx, pid); err != nil {
-// 			valid = false
-// 		} else {
-// 			md, err := n.reqResp.MetaData(ctx, pid)
-// 			if err != nil {
-// 				valid = false
-// 			} else {
-// 				// av := n.host.AgentVersion(pid)
-// 				// if av == "" {
-// 				// 	av = "n.a."
-// 				// }
-
-// 				if err := ps.Put(pid, "peerstoreKeyIsHandshaked", true); err != nil {
-// 					slog.Warn("Failed to store handshaked marker in peerstore", LogAttrError(err))
-// 				}
-
-// 				// slog.Info("Performed successful handshake", tele.LogAttrPeerID(pid), "seq", md.SeqNumber, "attnets", hex.EncodeToString(md.Attnets.Bytes()), "agent", av, "fork-digest", hex.EncodeToString(st.ForkDigest))
-// 				slog.Info("Performed successful handshake", LogAttrPeerID(pid), "seq", md.SeqNumber, "attnets", hex.EncodeToString(md.Attnets.Bytes()), "fork-digest", hex.EncodeToString(st.ForkDigest))
-// 			}
-// 		}
-// 	}
-
-// 	if !valid {
-// 		// the handshake failed, we disconnect and remove it from our pool
-// 		ps.RemovePeer(pid)
-// 		_ = n.host.Network().ClosePeer(pid)
-// 	}
-// }
