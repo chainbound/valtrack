@@ -7,7 +7,7 @@ import (
 )
 
 func main() {
-	disc, err := discovery.NewDiscovery(30303)
+	disc, err := discovery.NewDiscovery()
 	if err != nil {
 		panic(err)
 	}

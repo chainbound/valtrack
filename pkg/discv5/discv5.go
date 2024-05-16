@@ -1,0 +1,225 @@
+package discv5
+
+import (
+	"context"
+	"crypto/ecdsa"
+	"encoding/hex"
+	"fmt"
+	"net"
+	"os"
+	"sync"
+
+	"github.com/chainbound/valtrack/log"
+	"github.com/rs/zerolog"
+
+	eth "github.com/chainbound/valtrack/pkg/ethereum"
+	glog "github.com/ethereum/go-ethereum/log"
+	"github.com/ethereum/go-ethereum/p2p/discover"
+	"github.com/ethereum/go-ethereum/p2p/enode"
+	"github.com/libp2p/go-libp2p-core/peer"
+	ma "github.com/multiformats/go-multiaddr"
+	"github.com/pkg/errors"
+)
+
+type HostInfo struct {
+	sync.RWMutex
+
+	// AddrInfo
+	ID     peer.ID
+	IP     string
+	Port   int
+	MAddrs []ma.Multiaddr
+
+	Attr map[string]interface{}
+}
+
+type DiscoveryV5 struct {
+	Dv5Listener  *discover.UDPv5
+	FilterDigest string
+	log          zerolog.Logger
+	seenNodes    map[peer.ID]bool
+	fileLogger   *os.File
+}
+
+func NewDiscoveryV5(
+	port int,
+	discKey *ecdsa.PrivateKey,
+	ethNode *enode.LocalNode,
+	forkDigest string,
+	LogPath string,
+	bootnodes []*enode.Node) (*DiscoveryV5, error) {
+	// New geth logger at debug level
+	gethlog := glog.New()
+
+	log := log.NewLogger("discv5")
+
+	if len(bootnodes) == 0 {
+		return nil, errors.New("No bootnodes provided")
+	}
+
+	// udp address to listen
+	udpAddr := &net.UDPAddr{
+		IP:   net.IPv4zero,
+		Port: port,
+	}
+
+	cfg := discover.Config{
+		PrivateKey:   discKey,
+		NetRestrict:  nil,
+		Unhandled:    nil,
+		Bootnodes:    bootnodes,
+		Log:          gethlog,
+		ValidSchemes: enode.ValidSchemes,
+	}
+
+	// start listening and create a connection object
+	conn, err := net.ListenUDP("udp", udpAddr)
+	if err != nil {
+		return nil, errors.Wrap(err, "Failed to listen on UDP")
+	}
+
+	listener, err := discover.ListenV5(conn, ethNode, cfg)
+	if err != nil {
+		return nil, errors.Wrap(err, "Failed to start discv5 listener")
+	}
+
+	file, err := os.Create(LogPath)
+	if err != nil {
+		return nil, errors.Wrap(err, "Failed to create log file")
+	}
+
+	return &DiscoveryV5{
+		Dv5Listener:  listener,
+		FilterDigest: forkDigest,
+		log:          log,
+		seenNodes:    make(map[peer.ID]bool),
+		fileLogger:   file,
+	}, nil
+}
+
+// Start
+func (d *DiscoveryV5) Start(ctx context.Context) (chan *HostInfo, error) {
+	d.log.Info().Msg("Starting discv5 listener")
+
+	ch := make(chan *HostInfo)
+
+	// Start iterating over randomly discovered nodes
+	iter := d.Dv5Listener.RandomNodes()
+
+	go func() {
+		defer d.fileLogger.Close()
+
+		for iter.Next() {
+			node := iter.Node()
+
+			hInfo, err := d.handleENR(node)
+			if err != nil {
+				d.log.Error().Err(err).Msg("Error handling new ENR")
+				continue
+			}
+
+			if hInfo != nil && !d.seenNodes[hInfo.ID] {
+				d.log.Info().
+					Str("ID", hInfo.ID.String()).
+					Str("IP", hInfo.IP).
+					Int("Port", hInfo.Port).
+					Str("ENR", node.String()).
+					Any("Maddr", hInfo.MAddrs).
+					Any("Attnets", hInfo.Attr[eth.EnrAttnetsAttribute]).
+					Any("AttnetsNum", hInfo.Attr[eth.EnrAttnetsNumAttribute]).
+					Msg("Discovered new node")
+
+				// Log to file
+				fmt.Fprintf(d.fileLogger, "ID: %s, IP: %s, Port: %d, ENR: %s, Maddr: %v, Attnets: %v, AttnetsNum: %v\n",
+					hInfo.ID.String(), hInfo.IP, hInfo.Port, node.String(), hInfo.MAddrs, hInfo.Attr[eth.EnrAttnetsAttribute], hInfo.Attr[eth.EnrAttnetsNumAttribute])
+
+				// Mark node as seen
+				d.seenNodes[hInfo.ID] = true
+			}
+
+			ch <- hInfo
+		}
+	}()
+
+	return ch, nil
+}
+
+// handleENR parses and identifies all the advertised fields of a newly discovered peer
+func (d *DiscoveryV5) handleENR(node *enode.Node) (*HostInfo, error) {
+	// Parse ENR
+	enr, err := eth.ParseEnr(node)
+	if err != nil {
+		return nil, errors.Wrap(err, "unable to parse new discovered ENR")
+	}
+
+	if enr.Eth2Data.ForkDigest.String() != d.FilterDigest {
+		d.log.Debug().Str("fork_digest", enr.Eth2Data.ForkDigest.String()).Msg("Fork digest does not match")
+		return nil, nil
+	}
+
+	// Generate the peer ID from the pubkey
+	peerID, err := enr.GetPeerID()
+	if err != nil {
+		return &HostInfo{}, errors.Wrap(err, "unable to convert Geth pubkey to Libp2p")
+	}
+	// gen the HostInfo
+	hInfo := NewHostInfo(
+		peerID,
+		WithIPAndPorts(
+			enr.IP.String(),
+			enr.TCP,
+		),
+	)
+	// Add ENR and attnets as an attribute
+	hInfo.AddAtt(eth.EnrHostInfoAttribute, enr)
+	hInfo.AddAtt(eth.EnrAttnetsAttribute, hex.EncodeToString(enr.Attnets.Raw[:]))
+	hInfo.AddAtt(eth.EnrAttnetsNumAttribute, enr.Attnets.NetNumber)
+	return hInfo, nil
+}
+
+func (h *HostInfo) AddAtt(key string, attr interface{}) {
+	h.Lock()
+	defer h.Unlock()
+
+	h.Attr[key] = attr
+}
+
+func WithIPAndPorts(ip string, port int) RemoteHostOptions {
+	return func(h *HostInfo) error {
+		h.Lock()
+		defer h.Unlock()
+
+		h.IP = ip
+		h.Port = port
+
+		// Compose Multiaddress from data
+		mAddr, err := ma.NewMultiaddr(fmt.Sprintf("/ip4/%s/tcp/%d", ip, port))
+		if err != nil {
+			return err
+		}
+		// add single address to the HostInfo
+		h.MAddrs = append(h.MAddrs, mAddr)
+		return nil
+	}
+}
+
+type RemoteHostOptions func(*HostInfo) error
+
+// NewHostInfo returns a new structure of the PeerInfo field for the specific network passed as argk
+func NewHostInfo(peerID peer.ID, opts ...RemoteHostOptions) *HostInfo {
+	hInfo := &HostInfo{
+		ID:     peerID,
+		MAddrs: make([]ma.Multiaddr, 0),
+		Attr:   make(map[string]interface{}),
+	}
+
+	// apply all the Options
+	for _, opt := range opts {
+		err := opt(hInfo)
+		if err != nil {
+			fmt.Println("Unable to init HostInfo with folling Option", opt)
+		}
+	}
+
+	return hInfo
+}
