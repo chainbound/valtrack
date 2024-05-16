@@ -71,10 +71,8 @@ func NewNode(cfg *config.NodeConfig) (*Node, error) {
 
 	listenMaddr, err := MaddrFrom("127.0.0.1", 0)
 
-	// Initialize libp2p options, including security, transport, and other protocols
 	opts := []libp2p.Option{
-		// libp2p.ListenAddrStrings("/ip4/127.0.0.1/tcp/0"), // Modify as necessary
-		libp2p.ListenAddrs(listenMaddr), // Modify as necessary
+		libp2p.ListenAddrs(listenMaddr),
 		libp2p.Identity(cfg.PrivateKey),
 		libp2p.UserAgent("valtrack"),
 		libp2p.Transport(tcp.NewTCPTransport),
@@ -83,7 +81,6 @@ func NewNode(cfg *config.NodeConfig) (*Node, error) {
 		libp2p.Security(noise.ID, noise.New),
 		libp2p.DisableRelay(),
 		libp2p.Ping(false),
-		// libp2p.ResourceManager(rmgr),
 		libp2p.DisableMetrics(),
 	}
 
@@ -93,7 +90,6 @@ func NewNode(cfg *config.NodeConfig) (*Node, error) {
 		return nil, fmt.Errorf("failed to create libp2p host: %w", err)
 	}
 
-	// initialize the request-response protocol handlers
 	reqRespCfg := &ReqRespConfig{
 		ForkDigest:   cfg.ForkDigest,
 		Encoder:      encoder.SszNetworkEncoder{},
@@ -134,14 +130,15 @@ func (n *Node) Start(ctx context.Context) error {
 
 	n.reqResp.SetStatus(status)
 
-	// Register stream handlers for various protocols
 	// Set stream handlers on our libp2p host
 	if err := n.reqResp.RegisterHandlers(ctx); err != nil {
 		return fmt.Errorf("register RPC handlers: %w", err)
 	}
 
+	// Register the node itself as the notifiee for network connection events
 	n.host.Network().Notify(n)
 
+	// Start the discovery service
 	n.sup.Add(n.disc)
 
 	log := log.NewLogger("peer_dialer")
@@ -158,13 +155,6 @@ func (n *Node) Start(ctx context.Context) error {
 	n.log.Info().Msg("Starting node services")
 
 	return n.sup.Serve(ctx)
-	// return n.disc.Serve(ctx)
-}
-
-// discoverPeers is a placeholder for peer discovery logic
-func (n *Node) discoverPeers(ctx context.Context) error {
-	// Implementation of peer discovery goes here
-	return nil
 }
 
 func LogAttrPeerID(pid peer.ID) slog.Attr {

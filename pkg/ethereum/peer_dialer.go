@@ -2,7 +2,6 @@ package ethereum
 
 import (
 	"context"
-	"log/slog"
 	"time"
 
 	"github.com/libp2p/go-libp2p/core/host"
@@ -25,8 +24,8 @@ type PeerDialer struct {
 var _ suture.Service = (*PeerDialer)(nil)
 
 func (p *PeerDialer) Serve(ctx context.Context) error {
-	slog.Debug("Started Peer Dialer Service")
-	defer slog.Debug("Stopped Peer Dialer Service")
+	p.log.Debug().Msg("Started Peer Dialer Service")
+	defer p.log.Debug().Msg("Stopped Peer Dialer Service")
 
 	for {
 		// if we're at capacity, don't look for more peers
