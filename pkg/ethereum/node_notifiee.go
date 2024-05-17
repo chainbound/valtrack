@@ -44,7 +44,12 @@ func (n *Node) handleNewConnection(pid peer.ID) {
 	ctx, cancel := context.WithTimeout(context.Background(), n.cfg.DialTimeout)
 	defer cancel()
 
-	valid := n.validatePeer(ctx, pid)
+	addrs := n.host.Peerstore().Addrs(pid)
+	if len(addrs) == 0 {
+		n.log.Fatal().Str("No addresses found for peer", pid.String())
+	}
+
+	valid := n.validatePeer(ctx, pid, peer.AddrInfo{ID: pid, Addrs: addrs[:1]})
 
 	if !valid {
 		n.log.Info().Str("peer", pid.String()).Msg("Handshake failed, disconnecting")
@@ -54,28 +59,24 @@ func (n *Node) handleNewConnection(pid peer.ID) {
 	n.host.Network().ClosePeer(pid)
 }
 
-func (n *Node) validatePeer(ctx context.Context, pid peer.ID) bool {
+func (n *Node) validatePeer(ctx context.Context, pid peer.ID, addrInfo peer.AddrInfo) bool {
 	st, err := n.reqResp.Status(ctx, pid)
 	if err != nil {
 		n.log.Debug().Str("peer", pid.String()).Msg("Failed to get status from peer")
+		n.addToBackoffCache(pid, addrInfo)
 		return false
 	}
 
 	if err := n.reqResp.Ping(ctx, pid); err != nil {
 		n.log.Debug().Str("peer", pid.String()).Msg("Failed to ping peer")
+		n.addToBackoffCache(pid, addrInfo)
 		return false
 	}
 
 	md, err := n.reqResp.MetaData(ctx, pid)
 	if err != nil {
 		n.log.Debug().Str("peer", pid.String()).Msg("Failed to get metadata from peer")
-		n.incrementPeerBackoff(pid)
-
-		// Get the addresses of the peer from the peerstore
-		addrs := n.host.Peerstore().Addrs(pid)
-		if len(addrs) == 0 {
-			n.log.Debug().Str("No addresses found for peer", pid.String())
-		}
+		n.addToBackoffCache(pid, addrInfo)
 		return false
 	}
 
@@ -91,4 +92,27 @@ func (n *Node) validatePeer(ctx context.Context, pid peer.ID) bool {
 		time.Now().Format(time.RFC3339), pid.String(), md.SeqNumber, hex.EncodeToString(md.Attnets), hex.EncodeToString(st.ForkDigest))
 
 	return true
+}
+
+func (n *Node) addToBackoffCache(pid peer.ID, addrInfo peer.AddrInfo) {
+	n.cacheMutex.Lock()
+	defer n.cacheMutex.Unlock()
+
+	backoff, exists := n.backoffCache[pid]
+	if !exists {
+		backoff = &PeerBackoff{
+			BackoffCounter: 0,
+			AddrInfo:       addrInfo,
+		}
+	}
+
+	backoff.BackoffCounter++
+	backoff.LastSeen = time.Now()
+	n.backoffCache[pid] = backoff
+
+	if !exists {
+		n.log.Debug().Str("peer", pid.String()).Int("backoff_counter", backoff.BackoffCounter).Msg("Added peer to backoff cache")
+	} else {
+		n.log.Debug().Str("peer", pid.String()).Int("backoff_counter", backoff.BackoffCounter).Msg("Updated peer in backoff cache")
+	}
 }

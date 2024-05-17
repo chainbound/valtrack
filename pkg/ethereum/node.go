@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/chainbound/valtrack/config"
@@ -39,6 +40,7 @@ type PeerMetadata struct {
 type PeerBackoff struct {
 	LastSeen       time.Time
 	BackoffCounter int
+	AddrInfo       peer.AddrInfo
 }
 
 // Node represents a node in the network with a host and configuration.
@@ -53,20 +55,9 @@ type Node struct {
 
 	log        zerolog.Logger
 	fileLogger *os.File
-}
 
-// MaddrFrom takes in an ip address string and port to produce a go multiaddr format.
-func MaddrFrom(ip string, port uint) (ma.Multiaddr, error) {
-	parsed := net.ParseIP(ip)
-	if parsed == nil {
-		return nil, fmt.Errorf("invalid IP address: %s", ip)
-	} else if parsed.To4() != nil {
-		return ma.NewMultiaddr(fmt.Sprintf("/ip4/%s/tcp/%d", ip, port))
-	} else if parsed.To16() != nil {
-		return ma.NewMultiaddr(fmt.Sprintf("/ip6/%s/tcp/%d", ip, port))
-	} else {
-		return nil, fmt.Errorf("invalid IP address: %s", ip)
-	}
+	backoffCache map[peer.ID]*PeerBackoff
+	cacheMutex   sync.Mutex
 }
 
 // NewNode initializes a new Node using the provided configuration and options.
@@ -125,13 +116,14 @@ func NewNode(cfg *config.NodeConfig) (*Node, error) {
 
 	// Return the fully initialized Node
 	return &Node{
-		host:       h,
-		cfg:        cfg,
-		reqResp:    reqResp,
-		disc:       disc,
-		sup:        suture.NewSimple("eth"),
-		log:        log,
-		fileLogger: file,
+		host:         h,
+		cfg:          cfg,
+		reqResp:      reqResp,
+		disc:         disc,
+		sup:          suture.NewSimple("eth"),
+		log:          log,
+		fileLogger:   file,
+		backoffCache: make(map[peer.ID]*PeerBackoff),
 	}, nil
 }
 
@@ -169,9 +161,62 @@ func (n *Node) Start(ctx context.Context) error {
 		n.sup.Add(cs)
 	}
 
+	// Start the timer function to attempt reconnections every 30 seconds
+	go n.startReconnectionTimer()
+
 	n.log.Info().Msg("Starting node services")
 
 	return n.sup.Serve(ctx)
+}
+
+func (n *Node) startReconnectionTimer() {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			n.reconnectPeers()
+		}
+	}
+}
+
+func (n *Node) reconnectPeers() {
+	n.cacheMutex.Lock()
+	defer n.cacheMutex.Unlock()
+
+	for pid, backoff := range n.backoffCache {
+		if time.Since(backoff.LastSeen) >= 30*time.Second && backoff.BackoffCounter < 10 {
+			n.log.Debug().Str("peer", pid.String()).Msg("Attempting to reconnect to peer")
+
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			err := n.host.Connect(ctx, backoff.AddrInfo)
+			cancel()
+
+			if err != nil {
+				n.log.Debug().Str("peer", pid.String()).Msg("Failed to reconnect to peer")
+				backoff.LastSeen = time.Now()
+				backoff.BackoffCounter++
+			} else {
+				n.log.Info().Str("peer", pid.String()).Msg("Successfully reconnected to peer")
+				delete(n.backoffCache, pid)
+			}
+		}
+	}
+}
+
+// MaddrFrom takes in an ip address string and port to produce a go multiaddr format.
+func MaddrFrom(ip string, port uint) (ma.Multiaddr, error) {
+	parsed := net.ParseIP(ip)
+	if parsed == nil {
+		return nil, fmt.Errorf("invalid IP address: %s", ip)
+	} else if parsed.To4() != nil {
+		return ma.NewMultiaddr(fmt.Sprintf("/ip4/%s/tcp/%d", ip, port))
+	} else if parsed.To16() != nil {
+		return ma.NewMultiaddr(fmt.Sprintf("/ip6/%s/tcp/%d", ip, port))
+	} else {
+		return nil, fmt.Errorf("invalid IP address: %s", ip)
+	}
 }
 
 func LogAttrPeerID(pid peer.ID) slog.Attr {
@@ -201,43 +246,4 @@ func (n *Node) getPeerMetadata(pid peer.ID) (*PeerMetadata, error) {
 		return nil, err
 	}
 	return val.(*PeerMetadata), nil
-}
-
-// StorePeerBackoff stores the peer backoff data in the peerstore
-func (n *Node) storePeerBackoff(pid peer.ID, backoff PeerBackoff) {
-	if err := n.host.Peerstore().Put(pid, peerstoreKeyBackoffs, backoff); err != nil {
-		n.log.Debug().Str("peer", pid.String()).Msg("Failed to store peer backoff in peerstore")
-	}
-}
-
-// GetPeerBackoff retrieves the peer backoff data from the peerstore
-func (n *Node) getPeerBackoff(pid peer.ID) (*PeerBackoff, error) {
-	val, err := n.host.Peerstore().Get(pid, peerstoreKeyBackoffs)
-	if err != nil {
-		return nil, err
-	}
-	return val.(*PeerBackoff), nil
-}
-
-func (n *Node) incrementPeerBackoff(pid peer.ID) {
-	ps := n.host.Peerstore()
-
-	// Retrieve the current backoff counter
-	backoff, err := n.getPeerBackoff(pid)
-	if err != nil {
-		// If the backoff record doesn't exist, initialize it
-		backoff = &PeerBackoff{
-			LastSeen:       time.Now(),
-			BackoffCounter: 0,
-		}
-	}
-
-	// Increment the backoff counter
-	backoff.BackoffCounter++
-	backoff.LastSeen = time.Now()
-
-	// Store the updated backoff record
-	if err := ps.Put(pid, peerstoreKeyBackoffs, *backoff); err != nil {
-		n.log.Debug().Str("peer", pid.String()).Msg("Failed to store peer backoff in peerstore")
-	}
 }
