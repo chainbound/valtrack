@@ -2,46 +2,55 @@ package discovery
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/rand"
+	"fmt"
+	"time"
 
 	"github.com/chainbound/valtrack/config"
-	"github.com/chainbound/valtrack/pkg/discv5"
-	"github.com/ethereum/go-ethereum/crypto"
-	"github.com/ethereum/go-ethereum/p2p/enode"
-	"github.com/pkg/errors"
+
+	"github.com/chainbound/valtrack/pkg/ethereum"
+	"github.com/decred/dcrd/dcrec/secp256k1/v4"
+	gcrypto "github.com/ethereum/go-ethereum/crypto"
+	crypto "github.com/libp2p/go-libp2p/core/crypto"
+	"github.com/prysmaticlabs/prysm/v5/beacon-chain/p2p/encoder"
+	"github.com/prysmaticlabs/prysm/v5/config/params"
 )
 
 type Discovery struct {
-	discv5 *discv5.DiscoveryV5
+	node *ethereum.Node
 }
 
 func NewDiscovery() (*Discovery, error) {
-	conf := config.DefaultConfig
+	var privBytes []byte
 
-	discKey, err := crypto.GenerateKey()
+	key, err := ecdsa.GenerateKey(gcrypto.S256(), rand.Reader)
 	if err != nil {
-		return nil, errors.Wrap(err, "Failed to generate discv5 key")
+		return nil, fmt.Errorf("failed to generate key: %w", err)
 	}
 
-	// Init the ethereum peerstore
-	enodeDB, err := enode.OpenDB(conf.DBPath)
-	if err != nil {
-		return nil, errors.Wrap(err, "Failed to open the DB")
+	privBytes = gcrypto.FromECDSA(key)
+	if len(privBytes) != secp256k1.PrivKeyBytesLen {
+		return nil, fmt.Errorf("expected secp256k1 data size to be %d", secp256k1.PrivKeyBytesLen)
 	}
 
-	// Generate a Enode with custom ENR
-	ethNode := enode.NewLocalNode(enodeDB, discKey)
+	privateKey := (*crypto.Secp256k1PrivateKey)(secp256k1.PrivKeyFromBytes(privBytes))
 
-	disc, err := discv5.NewDiscoveryV5(conf.UDP, discKey, ethNode, conf.ForkDigest, conf.LogPath, config.GetEthereumBootnodes())
-
-	if err != nil {
-		return nil, errors.Wrap(err, "Failed to generate the discv5 service")
+	nodeConfig := &config.NodeConfig{
+		PrivateKey:   privateKey,
+		BeaconConfig: params.MainnetConfig(),
+		ForkDigest:   [4]byte{0x6a, 0x95, 0xa1, 0xa9}, // Mainnet fork digest
+		Encoder:      encoder.SszNetworkEncoder{},
+		DialTimeout:  5 * time.Second,
 	}
+
+	n, err := ethereum.NewNode(nodeConfig)
 
 	return &Discovery{
-		discv5: disc,
-	}, nil
+		node: n,
+	}, err
 }
 
-func (d *Discovery) Start(ctx context.Context) (chan *discv5.HostInfo, error) {
-	return d.discv5.Start(ctx)
+func (d *Discovery) Start(ctx context.Context) error {
+	return d.node.Start(ctx)
 }

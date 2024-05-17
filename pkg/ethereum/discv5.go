@@ -1,4 +1,4 @@
-package discv5
+package ethereum
 
 import (
 	"context"
@@ -8,15 +8,16 @@ import (
 	"net"
 	"os"
 	"sync"
+	"time"
 
+	"github.com/chainbound/valtrack/config"
 	"github.com/chainbound/valtrack/log"
+	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/rs/zerolog"
 
-	eth "github.com/chainbound/valtrack/pkg/ethereum"
 	glog "github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/p2p/discover"
 	"github.com/ethereum/go-ethereum/p2p/enode"
-	"github.com/libp2p/go-libp2p-core/peer"
 	ma "github.com/multiformats/go-multiaddr"
 	"github.com/pkg/errors"
 )
@@ -39,35 +40,38 @@ type DiscoveryV5 struct {
 	log          zerolog.Logger
 	seenNodes    map[peer.ID]bool
 	fileLogger   *os.File
+	out          chan peer.AddrInfo
 }
 
-func NewDiscoveryV5(
-	port int,
-	discKey *ecdsa.PrivateKey,
-	ethNode *enode.LocalNode,
-	forkDigest string,
-	LogPath string,
-	bootnodes []*enode.Node) (*DiscoveryV5, error) {
+func NewDiscoveryV5(pk *ecdsa.PrivateKey, discConfig *config.DiscConfig) (*DiscoveryV5, error) {
 	// New geth logger at debug level
 	gethlog := glog.New()
-
 	log := log.NewLogger("discv5")
 
-	if len(bootnodes) == 0 {
+	// Init the ethereum peerstore
+	enodeDB, err := enode.OpenDB(discConfig.DBPath)
+	if err != nil {
+		return nil, errors.Wrap(err, "Failed to open the DB")
+	}
+
+	// Generate a Enode with custom ENR
+	ethNode := enode.NewLocalNode(enodeDB, pk)
+
+	if len(discConfig.Bootnodes) == 0 {
 		return nil, errors.New("No bootnodes provided")
 	}
 
 	// udp address to listen
 	udpAddr := &net.UDPAddr{
 		IP:   net.IPv4zero,
-		Port: port,
+		Port: discConfig.UDP,
 	}
 
 	cfg := discover.Config{
-		PrivateKey:   discKey,
+		PrivateKey:   pk,
 		NetRestrict:  nil,
 		Unhandled:    nil,
-		Bootnodes:    bootnodes,
+		Bootnodes:    discConfig.Bootnodes,
 		Log:          gethlog,
 		ValidSchemes: enode.ValidSchemes,
 	}
@@ -83,71 +87,83 @@ func NewDiscoveryV5(
 		return nil, errors.Wrap(err, "Failed to start discv5 listener")
 	}
 
-	file, err := os.Create(LogPath)
+	file, err := os.Create(discConfig.LogPath)
 	if err != nil {
 		return nil, errors.Wrap(err, "Failed to create log file")
 	}
 
 	return &DiscoveryV5{
 		Dv5Listener:  listener,
-		FilterDigest: forkDigest,
+		FilterDigest: discConfig.ForkDigest,
 		log:          log,
 		seenNodes:    make(map[peer.ID]bool),
 		fileLogger:   file,
+		out:          make(chan peer.AddrInfo),
 	}, nil
 }
 
-// Start
-func (d *DiscoveryV5) Start(ctx context.Context) (chan *HostInfo, error) {
+func (d *DiscoveryV5) Serve(ctx context.Context) error {
 	d.log.Info().Msg("Starting discv5 listener")
-
-	ch := make(chan *HostInfo)
 
 	// Start iterating over randomly discovered nodes
 	iter := d.Dv5Listener.RandomNodes()
+
+	defer iter.Close()
+	defer close(d.out)
 
 	go func() {
 		defer d.fileLogger.Close()
 
 		for iter.Next() {
-			node := iter.Node()
+			select {
+			case <-ctx.Done():
+				d.log.Info().Msg("Stopping discv5 listener")
+				return
+			default:
+				if !iter.Next() {
+					return
+				}
+				node := iter.Node()
+				hInfo, err := d.handleENR(node)
+				if err != nil {
+					d.log.Error().Err(err).Msg("Error handling new ENR")
+					continue
+				}
 
-			hInfo, err := d.handleENR(node)
-			if err != nil {
-				d.log.Error().Err(err).Msg("Error handling new ENR")
-				continue
+				if hInfo != nil && !d.seenNodes[hInfo.ID] {
+					d.out <- peer.AddrInfo{
+						ID:    hInfo.ID,
+						Addrs: hInfo.MAddrs,
+					}
+
+					d.log.Info().
+						Str("ID", hInfo.ID.String()).
+						Str("IP", hInfo.IP).
+						Int("Port", hInfo.Port).
+						Str("ENR", node.String()).
+						Any("Maddr", hInfo.MAddrs).
+						Any("Attnets", hInfo.Attr[EnrAttnetsAttribute]).
+						Any("AttnetsNum", hInfo.Attr[EnrAttnetsNumAttribute]).
+						Msg("Discovered new node")
+
+					// Log to file
+					fmt.Fprintf(d.fileLogger, "%s ID: %s, IP: %s, Port: %d, ENR: %s, Maddr: %v, Attnets: %v, AttnetsNum: %v\n",
+						time.Now().Format(time.RFC3339), hInfo.ID.String(), hInfo.IP, hInfo.Port, node.String(), hInfo.MAddrs, hInfo.Attr[EnrAttnetsAttribute], hInfo.Attr[EnrAttnetsNumAttribute])
+
+					d.seenNodes[hInfo.ID] = true
+				}
 			}
-
-			if hInfo != nil && !d.seenNodes[hInfo.ID] {
-				d.log.Info().
-					Str("ID", hInfo.ID.String()).
-					Str("IP", hInfo.IP).
-					Int("Port", hInfo.Port).
-					Str("ENR", node.String()).
-					Any("Maddr", hInfo.MAddrs).
-					Any("Attnets", hInfo.Attr[eth.EnrAttnetsAttribute]).
-					Any("AttnetsNum", hInfo.Attr[eth.EnrAttnetsNumAttribute]).
-					Msg("Discovered new node")
-
-				// Log to file
-				fmt.Fprintf(d.fileLogger, "ID: %s, IP: %s, Port: %d, ENR: %s, Maddr: %v, Attnets: %v, AttnetsNum: %v\n",
-					hInfo.ID.String(), hInfo.IP, hInfo.Port, node.String(), hInfo.MAddrs, hInfo.Attr[eth.EnrAttnetsAttribute], hInfo.Attr[eth.EnrAttnetsNumAttribute])
-
-				// Mark node as seen
-				d.seenNodes[hInfo.ID] = true
-			}
-
-			ch <- hInfo
 		}
 	}()
 
-	return ch, nil
+	<-ctx.Done()
+	return ctx.Err()
 }
 
 // handleENR parses and identifies all the advertised fields of a newly discovered peer
 func (d *DiscoveryV5) handleENR(node *enode.Node) (*HostInfo, error) {
 	// Parse ENR
-	enr, err := eth.ParseEnr(node)
+	enr, err := ParseEnr(node)
 	if err != nil {
 		return nil, errors.Wrap(err, "unable to parse new discovered ENR")
 	}
@@ -171,9 +187,9 @@ func (d *DiscoveryV5) handleENR(node *enode.Node) (*HostInfo, error) {
 		),
 	)
 	// Add ENR and attnets as an attribute
-	hInfo.AddAtt(eth.EnrHostInfoAttribute, enr)
-	hInfo.AddAtt(eth.EnrAttnetsAttribute, hex.EncodeToString(enr.Attnets.Raw[:]))
-	hInfo.AddAtt(eth.EnrAttnetsNumAttribute, enr.Attnets.NetNumber)
+	hInfo.AddAtt(EnrHostInfoAttribute, enr)
+	hInfo.AddAtt(EnrAttnetsAttribute, hex.EncodeToString(enr.Attnets.Raw[:]))
+	hInfo.AddAtt(EnrAttnetsNumAttribute, enr.Attnets.NetNumber)
 	return hInfo, nil
 }
 

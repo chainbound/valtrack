@@ -2,6 +2,9 @@ package main
 
 import (
 	"context"
+	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/chainbound/valtrack/discovery"
 )
@@ -12,11 +15,20 @@ func main() {
 		panic(err)
 	}
 
-	nodes, err := disc.Start(context.Background())
-	if err != nil {
-		panic(err)
-	}
+	ctx, cancel := context.WithCancel(context.Background())
 
-	for range nodes {
-	}
+	defer cancel()
+
+	go func() {
+		if err := disc.Start(ctx); err != nil {
+			panic(err)
+		}
+	}()
+
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+
+	<-quit
+
+	cancel()
 }
