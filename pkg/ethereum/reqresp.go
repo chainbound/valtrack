@@ -200,8 +200,8 @@ func (r *ReqResp) goodbyeHandler(ctx context.Context, stream network.Stream) err
 
 	msg, found := types.GoodbyeCodeMessages[req]
 	if found {
-		if _, err := r.host.Peerstore().Get(stream.Conn().RemotePeer(), peerstoreKeyIsHandshaked); err == nil {
-			r.log.Info().Str("peer", stream.Conn().RemotePeer().String()).Str("msg", msg).Any("req", req).Msg("Received goodbye message")
+		if _, err := r.host.Peerstore().Get(stream.Conn().RemotePeer(), peerstoreKeyMetadata); err == nil {
+			r.log.Info().Str("peer", stream.Conn().RemotePeer().String()).Str("msg", msg).Msg("Received goodbye message")
 		} else {
 			r.log.Debug().Str("peer", stream.Conn().RemotePeer().String()).Str("msg", msg).Msg("Received goodbye message")
 		}
@@ -228,7 +228,7 @@ func (r *ReqResp) statusHandler(ctx context.Context, stream network.Stream) erro
 		return fmt.Errorf("local status is nil")
 	}
 
-	// TODO: Hermes - ask the delegate node for the latest status
+	// NOTE: Hermes - ask the delegate node for the latest status
 	// ask our delegate node for the latest status, using our known latest status
 	// this is important because blindly forwarding the request from a remote peer
 	// will lead to intermittent disconnects from the beacon node. The "trusted peer"
@@ -312,6 +312,8 @@ func (r *ReqResp) Goodbye(ctx context.Context, pid peer.ID, code uint64) error {
 	defer stream.Close()
 
 	req := primitives.SSZUint64(code)
+	r.log.Debug().Str("peer", pid.String()).Any("req", req).Msg("Sending goodbye message")
+
 	if err := r.writeRequest(ctx, stream, &req); err != nil {
 		return fmt.Errorf("write goodbye request: %w", err)
 	}

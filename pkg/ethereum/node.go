@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"time"
 
 	"github.com/chainbound/valtrack/config"
 	"github.com/chainbound/valtrack/log"
@@ -20,9 +21,25 @@ import (
 	"github.com/pkg/errors"
 	"github.com/prysmaticlabs/prysm/v5/beacon-chain/p2p/encoder"
 	eth "github.com/prysmaticlabs/prysm/v5/proto/prysm/v1alpha1"
+	pb "github.com/prysmaticlabs/prysm/v5/proto/prysm/v1alpha1"
 	"github.com/rs/zerolog"
 	"github.com/thejerf/suture/v4"
 )
+
+const (
+	peerstoreKeyMetadata = "peer_metadata"
+	peerstoreKeyBackoffs = "peer_backoffs"
+)
+
+type PeerMetadata struct {
+	LastSeen time.Time
+	Metadata *pb.MetaDataV1
+}
+
+type PeerBackoff struct {
+	LastSeen       time.Time
+	BackoffCounter int
+}
 
 // Node represents a node in the network with a host and configuration.
 type Node struct {
@@ -163,4 +180,64 @@ func LogAttrPeerID(pid peer.ID) slog.Attr {
 
 func LogAttrError(err error) slog.Attr {
 	return slog.Attr{Key: "AttrKeyError", Value: slog.AnyValue(err)}
+}
+
+// StorePeerMetadata stores the peer metadata in the peerstore
+func (n *Node) storePeerMetadata(pid peer.ID, md *pb.MetaDataV1) {
+	metadata := PeerMetadata{
+		LastSeen: time.Now(),
+		Metadata: md, // Adjust as necessary
+	}
+
+	if err := n.host.Peerstore().Put(pid, peerstoreKeyMetadata, metadata); err != nil {
+		n.log.Debug().Str("peer", pid.String()).Msg("Failed to store peer metadata in peerstore")
+	}
+}
+
+// GetPeerMetadata retrieves the peer metadata from the peerstore
+func (n *Node) getPeerMetadata(pid peer.ID) (*PeerMetadata, error) {
+	val, err := n.host.Peerstore().Get(pid, peerstoreKeyMetadata)
+	if err != nil {
+		return nil, err
+	}
+	return val.(*PeerMetadata), nil
+}
+
+// StorePeerBackoff stores the peer backoff data in the peerstore
+func (n *Node) storePeerBackoff(pid peer.ID, backoff PeerBackoff) {
+	if err := n.host.Peerstore().Put(pid, peerstoreKeyBackoffs, backoff); err != nil {
+		n.log.Debug().Str("peer", pid.String()).Msg("Failed to store peer backoff in peerstore")
+	}
+}
+
+// GetPeerBackoff retrieves the peer backoff data from the peerstore
+func (n *Node) getPeerBackoff(pid peer.ID) (*PeerBackoff, error) {
+	val, err := n.host.Peerstore().Get(pid, peerstoreKeyBackoffs)
+	if err != nil {
+		return nil, err
+	}
+	return val.(*PeerBackoff), nil
+}
+
+func (n *Node) incrementPeerBackoff(pid peer.ID) {
+	ps := n.host.Peerstore()
+
+	// Retrieve the current backoff counter
+	backoff, err := n.getPeerBackoff(pid)
+	if err != nil {
+		// If the backoff record doesn't exist, initialize it
+		backoff = &PeerBackoff{
+			LastSeen:       time.Now(),
+			BackoffCounter: 0,
+		}
+	}
+
+	// Increment the backoff counter
+	backoff.BackoffCounter++
+	backoff.LastSeen = time.Now()
+
+	// Store the updated backoff record
+	if err := ps.Put(pid, peerstoreKeyBackoffs, *backoff); err != nil {
+		n.log.Debug().Str("peer", pid.String()).Msg("Failed to store peer backoff in peerstore")
+	}
 }
