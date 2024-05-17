@@ -149,6 +149,8 @@ func (d *DiscoveryV5) Serve(ctx context.Context) error {
 					// Log to file
 					fmt.Fprintf(d.fileLogger, "%s ID: %s, IP: %s, Port: %d, ENR: %s, Maddr: %v, Attnets: %v, AttnetsNum: %v\n",
 						time.Now().Format(time.RFC3339), hInfo.ID.String(), hInfo.IP, hInfo.Port, node.String(), hInfo.MAddrs, hInfo.Attr[EnrAttnetsAttribute], hInfo.Attr[EnrAttnetsNumAttribute])
+
+					d.seenNodes[hInfo.ID] = true
 				}
 			}
 		}
