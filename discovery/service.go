@@ -24,7 +24,6 @@ type Discovery struct {
 func NewDiscovery() (*Discovery, error) {
 	var privBytes []byte
 
-	fmt.Println("Generating new private key")
 	key, err := ecdsa.GenerateKey(gcrypto.S256(), rand.Reader)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate key: %w", err)

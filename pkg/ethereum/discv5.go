@@ -116,12 +116,12 @@ func (d *DiscoveryV5) Serve(ctx context.Context) error {
 
 		for iter.Next() {
 			select {
-			case <-ctx.Done(): // Listen for context cancellation
+			case <-ctx.Done():
 				d.log.Info().Msg("Stopping discv5 listener")
-				return // Exit the goroutine when context is cancelled
+				return
 			default:
 				if !iter.Next() {
-					return // No more nodes to process, exit the goroutine
+					return
 				}
 				node := iter.Node()
 				hInfo, err := d.handleENR(node)
@@ -131,7 +131,11 @@ func (d *DiscoveryV5) Serve(ctx context.Context) error {
 				}
 
 				if hInfo != nil && !d.seenNodes[hInfo.ID] {
-					// Log discovered node
+					d.out <- peer.AddrInfo{
+						ID:    hInfo.ID,
+						Addrs: hInfo.MAddrs,
+					}
+
 					d.log.Info().
 						Str("ID", hInfo.ID.String()).
 						Str("IP", hInfo.IP).
@@ -145,18 +149,13 @@ func (d *DiscoveryV5) Serve(ctx context.Context) error {
 					// Log to file
 					fmt.Fprintf(d.fileLogger, "%s ID: %s, IP: %s, Port: %d, ENR: %s, Maddr: %v, Attnets: %v, AttnetsNum: %v\n",
 						time.Now().Format(time.RFC3339), hInfo.ID.String(), hInfo.IP, hInfo.Port, node.String(), hInfo.MAddrs, hInfo.Attr[EnrAttnetsAttribute], hInfo.Attr[EnrAttnetsNumAttribute])
-
-					d.out <- peer.AddrInfo{
-						ID:    hInfo.ID,
-						Addrs: hInfo.MAddrs,
-					}
 				}
 			}
 		}
 	}()
 
-	<-ctx.Done()     // Block until the context is cancelled
-	return ctx.Err() // Return the context's error
+	<-ctx.Done()
+	return ctx.Err()
 }
 
 // handleENR parses and identifies all the advertised fields of a newly discovered peer
