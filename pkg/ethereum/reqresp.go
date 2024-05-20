@@ -200,11 +200,7 @@ func (r *ReqResp) goodbyeHandler(ctx context.Context, stream network.Stream) err
 
 	msg, found := types.GoodbyeCodeMessages[req]
 	if found {
-		if _, err := r.host.Peerstore().Get(stream.Conn().RemotePeer(), peerstoreKeyMetadata); err == nil {
-			r.log.Info().Str("peer", stream.Conn().RemotePeer().String()).Str("msg", msg).Msg("Received goodbye message")
-		} else {
-			r.log.Debug().Str("peer", stream.Conn().RemotePeer().String()).Str("msg", msg).Msg("Received goodbye message")
-		}
+		r.log.Debug().Str("peer", stream.Conn().RemotePeer().String()).Str("msg", msg).Msg("Received goodbye message")
 	}
 
 	return stream.Close()

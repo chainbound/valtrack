@@ -27,11 +27,6 @@ import (
 	"github.com/thejerf/suture/v4"
 )
 
-const (
-	peerstoreKeyMetadata = "peer_metadata"
-	peerstoreKeyBackoffs = "peer_backoffs"
-)
-
 type PeerMetadata struct {
 	LastSeen time.Time
 	Metadata *pb.MetaDataV1
@@ -56,8 +51,9 @@ type Node struct {
 	log        zerolog.Logger
 	fileLogger *os.File
 
-	backoffCache map[peer.ID]*PeerBackoff
-	cacheMutex   sync.Mutex
+	backoffCache  map[peer.ID]*PeerBackoff
+	metadataCache map[peer.ID]*PeerMetadata
+	cacheMutex    sync.Mutex
 }
 
 // NewNode initializes a new Node using the provided configuration and options.
@@ -116,14 +112,15 @@ func NewNode(cfg *config.NodeConfig) (*Node, error) {
 
 	// Return the fully initialized Node
 	return &Node{
-		host:         h,
-		cfg:          cfg,
-		reqResp:      reqResp,
-		disc:         disc,
-		sup:          suture.NewSimple("eth"),
-		log:          log,
-		fileLogger:   file,
-		backoffCache: make(map[peer.ID]*PeerBackoff),
+		host:          h,
+		cfg:           cfg,
+		reqResp:       reqResp,
+		disc:          disc,
+		sup:           suture.NewSimple("eth"),
+		log:           log,
+		fileLogger:    file,
+		backoffCache:  make(map[peer.ID]*PeerBackoff),
+		metadataCache: make(map[peer.ID]*PeerMetadata),
 	}, nil
 }
 
@@ -205,6 +202,53 @@ func (n *Node) reconnectPeers() {
 	}
 }
 
+func (n *Node) addToBackoffCache(pid peer.ID, addrInfo peer.AddrInfo) {
+	n.cacheMutex.Lock()
+	defer n.cacheMutex.Unlock()
+
+	backoff, exists := n.backoffCache[pid]
+	if !exists {
+		backoff = &PeerBackoff{
+			BackoffCounter: 0,
+			AddrInfo:       addrInfo,
+		}
+	}
+
+	backoff.BackoffCounter++
+	backoff.LastSeen = time.Now()
+	n.backoffCache[pid] = backoff
+
+	if !exists {
+		n.log.Debug().Str("peer", pid.String()).Int("backoff_counter", backoff.BackoffCounter).Msg("Added peer to backoff cache")
+	} else {
+		n.log.Debug().Str("peer", pid.String()).Int("backoff_counter", backoff.BackoffCounter).Msg("Updated peer in backoff cache")
+	}
+}
+
+func (n *Node) addToMetadataCache(pid peer.ID, metadata *pb.MetaDataV1) {
+	n.cacheMutex.Lock()
+	defer n.cacheMutex.Unlock()
+
+	n.metadataCache[pid] = &PeerMetadata{
+		LastSeen: time.Now(),
+		Metadata: &pb.MetaDataV1{},
+	}
+
+	n.log.Debug().Str("peer", pid.String()).Msg("Added peer to metadata cache")
+}
+
+func (n *Node) getMetadataFromCache(pid peer.ID) (*PeerMetadata, error) {
+	n.cacheMutex.Lock()
+	defer n.cacheMutex.Unlock()
+
+	metadata, exists := n.metadataCache[pid]
+	if !exists {
+		return nil, fmt.Errorf("metadata not found for peer: %s", pid)
+	}
+
+	return metadata, nil
+}
+
 // MaddrFrom takes in an ip address string and port to produce a go multiaddr format.
 func MaddrFrom(ip string, port uint) (ma.Multiaddr, error) {
 	parsed := net.ParseIP(ip)
@@ -225,25 +269,4 @@ func LogAttrPeerID(pid peer.ID) slog.Attr {
 
 func LogAttrError(err error) slog.Attr {
 	return slog.Attr{Key: "AttrKeyError", Value: slog.AnyValue(err)}
-}
-
-// StorePeerMetadata stores the peer metadata in the peerstore
-func (n *Node) storePeerMetadata(pid peer.ID, md *pb.MetaDataV1) {
-	metadata := PeerMetadata{
-		LastSeen: time.Now(),
-		Metadata: md, // Adjust as necessary
-	}
-
-	if err := n.host.Peerstore().Put(pid, peerstoreKeyMetadata, metadata); err != nil {
-		n.log.Debug().Str("peer", pid.String()).Msg("Failed to store peer metadata in peerstore")
-	}
-}
-
-// GetPeerMetadata retrieves the peer metadata from the peerstore
-func (n *Node) getPeerMetadata(pid peer.ID) (*PeerMetadata, error) {
-	val, err := n.host.Peerstore().Get(pid, peerstoreKeyMetadata)
-	if err != nil {
-		return nil, err
-	}
-	return val.(*PeerMetadata), nil
 }

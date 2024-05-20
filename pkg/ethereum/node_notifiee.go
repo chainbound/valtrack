@@ -26,8 +26,7 @@ func (n *Node) Connected(net network.Network, c network.Conn) {
 }
 
 func (n *Node) Disconnected(net network.Network, c network.Conn) {
-	ps := n.host.Peerstore()
-	if _, err := ps.Get(c.RemotePeer(), peerstoreKeyMetadata); err == nil {
+	if _, err := n.getMetadataFromCache(c.RemotePeer()); err == nil {
 		n.log.Info().
 			Str("peer", c.RemotePeer().String()).
 			Msg("Disconnected from handshaked peer")
@@ -80,7 +79,7 @@ func (n *Node) validatePeer(ctx context.Context, pid peer.ID, addrInfo peer.Addr
 		return false
 	}
 
-	n.storePeerMetadata(pid, md)
+	n.addToMetadataCache(pid, md)
 
 	n.log.Info().
 		Str("peer", pid.String()).
@@ -92,27 +91,4 @@ func (n *Node) validatePeer(ctx context.Context, pid peer.ID, addrInfo peer.Addr
 		time.Now().Format(time.RFC3339), pid.String(), md.SeqNumber, hex.EncodeToString(md.Attnets), hex.EncodeToString(st.ForkDigest))
 
 	return true
-}
-
-func (n *Node) addToBackoffCache(pid peer.ID, addrInfo peer.AddrInfo) {
-	n.cacheMutex.Lock()
-	defer n.cacheMutex.Unlock()
-
-	backoff, exists := n.backoffCache[pid]
-	if !exists {
-		backoff = &PeerBackoff{
-			BackoffCounter: 0,
-			AddrInfo:       addrInfo,
-		}
-	}
-
-	backoff.BackoffCounter++
-	backoff.LastSeen = time.Now()
-	n.backoffCache[pid] = backoff
-
-	if !exists {
-		n.log.Debug().Str("peer", pid.String()).Int("backoff_counter", backoff.BackoffCounter).Msg("Added peer to backoff cache")
-	} else {
-		n.log.Debug().Str("peer", pid.String()).Int("backoff_counter", backoff.BackoffCounter).Msg("Updated peer in backoff cache")
-	}
 }
