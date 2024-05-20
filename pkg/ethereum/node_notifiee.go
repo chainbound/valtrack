@@ -22,6 +22,8 @@ func (n *Node) Connected(net network.Network, c network.Conn) {
 
 	if c.Stat().Direction == network.DirOutbound {
 		go n.handleNewConnection(c.RemotePeer())
+	} else if c.Stat().Direction == network.DirInbound {
+		go n.handleInboundConnection(c.RemotePeer())
 	}
 }
 
@@ -38,7 +40,7 @@ func (n *Node) Listen(net network.Network, maddr ma.Multiaddr) {}
 func (n *Node) ListenClose(net network.Network, maddr ma.Multiaddr) {}
 
 func (n *Node) handleNewConnection(pid peer.ID) {
-	n.log.Info().Str("peer", pid.String()).Msg("Handling new connection")
+	n.log.Info().Str("peer", pid.String()).Msg("Handling new outbound connection")
 
 	ctx, cancel := context.WithTimeout(context.Background(), n.cfg.DialTimeout)
 	defer cancel()
@@ -56,6 +58,29 @@ func (n *Node) handleNewConnection(pid peer.ID) {
 	}
 	n.reqResp.Goodbye(ctx, pid, 3) // NOTE: Figure out the correct reason code
 	n.host.Network().ClosePeer(pid)
+}
+
+func (n *Node) handleInboundConnection(pid peer.ID) {
+	n.log.Info().Str("peer", pid.String()).Msg("Handling new inbound connection")
+
+	ctx, cancel := context.WithTimeout(context.Background(), n.cfg.DialTimeout)
+	defer cancel()
+
+	addrs := n.host.Peerstore().Addrs(pid)
+	if len(addrs) == 0 {
+		n.log.Fatal().Str("No addresses found for peer", pid.String())
+	}
+
+	valid := n.validatePeer(ctx, pid, peer.AddrInfo{ID: pid, Addrs: addrs[:1]})
+
+	if !valid {
+		n.log.Info().Str("peer", pid.String()).Msg("Handshake failed, disconnecting")
+		n.host.Peerstore().RemovePeer(pid)
+		n.host.Network().ClosePeer(pid)
+		return
+	}
+
+	n.log.Info().Str("peer", pid.String()).Msg("Inbound connection established")
 }
 
 func (n *Node) validatePeer(ctx context.Context, pid peer.ID, addrInfo peer.AddrInfo) bool {
