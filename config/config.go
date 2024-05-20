@@ -56,8 +56,8 @@ type DiscConfig struct {
 
 var DefaultConfig DiscConfig = DiscConfig{
 	IP:         "0.0.0.0",
-	UDP:        0,
-	TCP:        0,
+	UDP:        8080,
+	TCP:        8080,
 	DBPath:     "",
 	ForkDigest: "0x6a95a1a9",
 	LogPath:    "nodes.log",

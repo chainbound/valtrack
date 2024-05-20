@@ -73,7 +73,7 @@ func NewNode(cfg *config.NodeConfig) (*Node, error) {
 	conf := config.DefaultConfig
 	disc, err := NewDiscoveryV5(discKey, &conf)
 
-	listenMaddr, err := MaddrFrom("127.0.0.1", 0)
+	listenMaddr, err := MaddrFrom("0.0.0.0", 0)
 
 	opts := []libp2p.Option{
 		libp2p.ListenAddrs(listenMaddr),

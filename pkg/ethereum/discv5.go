@@ -63,7 +63,7 @@ func NewDiscoveryV5(pk *ecdsa.PrivateKey, discConfig *config.DiscConfig) (*Disco
 
 	// udp address to listen
 	udpAddr := &net.UDPAddr{
-		IP:   net.IPv4zero,
+		IP:   net.ParseIP("0.0.0.0"),
 		Port: discConfig.UDP,
 	}
 
