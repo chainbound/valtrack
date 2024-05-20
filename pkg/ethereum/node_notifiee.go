@@ -56,6 +56,9 @@ func (n *Node) handleNewConnection(pid peer.ID) {
 		n.log.Info().Str("peer", pid.String()).Msg("Handshake failed, disconnecting")
 		n.host.Peerstore().RemovePeer(pid)
 	}
+
+	n.log.Info().Str("peer", pid.String()).Msg("Outbound connection established")
+
 	n.reqResp.Goodbye(ctx, pid, 3) // NOTE: Figure out the correct reason code
 	n.host.Network().ClosePeer(pid)
 }
@@ -81,6 +84,9 @@ func (n *Node) handleInboundConnection(pid peer.ID) {
 	}
 
 	n.log.Info().Str("peer", pid.String()).Msg("Inbound connection established")
+
+	n.reqResp.Goodbye(ctx, pid, 3) // NOTE: Figure out the correct reason code
+	n.host.Network().ClosePeer(pid)
 }
 
 func (n *Node) validatePeer(ctx context.Context, pid peer.ID, addrInfo peer.AddrInfo) bool {
