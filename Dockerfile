@@ -12,3 +12,5 @@ FROM debian:bookworm
 
 COPY --from=builder /run-app /usr/local/bin/
 CMD ["run-app"]
+
+EXPOSE 9000

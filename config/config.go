@@ -54,10 +54,10 @@ type DiscConfig struct {
 	Bootnodes  []*enode.Node
 }
 
-var DefaultConfig DiscConfig = DiscConfig{
+var DefaultDiscConfig DiscConfig = DiscConfig{
 	IP:         "0.0.0.0",
-	UDP:        8080,
-	TCP:        8080,
+	UDP:        9000,
+	TCP:        9000,
 	DBPath:     "",
 	ForkDigest: "0x6a95a1a9",
 	LogPath:    "nodes.log",
@@ -66,10 +66,23 @@ var DefaultConfig DiscConfig = DiscConfig{
 
 // NodeConfig holds additional configuration options for the node.
 type NodeConfig struct {
-	PrivateKey    *crypto.Secp256k1PrivateKey
-	BeaconConfig  *params.BeaconChainConfig
-	ForkDigest    [4]byte
-	Encoder       encoder.NetworkEncoding
-	DialTimeout   time.Duration
-	PrivateKeyStr string
+	PrivateKey   *crypto.Secp256k1PrivateKey
+	BeaconConfig *params.BeaconChainConfig
+	ForkDigest   [4]byte
+	Encoder      encoder.NetworkEncoding
+	DialTimeout  time.Duration
+	MaxPeerCount int
+	IP           string
+	Port         int
+}
+
+var DefaultNodeConfig NodeConfig = NodeConfig{
+	PrivateKey:   nil,
+	BeaconConfig: nil,
+	ForkDigest:   [4]byte{0x6a, 0x95, 0xa1, 0xa9},
+	Encoder:      encoder.SszNetworkEncoder{},
+	DialTimeout:  5 * time.Second,
+	MaxPeerCount: 30,
+	IP:           "0.0.0.0",
+	Port:         9000,
 }

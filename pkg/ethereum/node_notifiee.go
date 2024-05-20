@@ -24,6 +24,8 @@ func (n *Node) Connected(net network.Network, c network.Conn) {
 		go n.handleNewConnection(c.RemotePeer())
 	} else if c.Stat().Direction == network.DirInbound {
 		go n.handleInboundConnection(c.RemotePeer())
+	} else {
+		n.log.Info().Str("peer", c.RemotePeer().String()).Msg("Unknown connection direction")
 	}
 }
 

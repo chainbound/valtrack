@@ -1,4 +1,4 @@
-# fly.toml app configuration file generated for valtrack on 2024-05-20T15:18:41+05:30
+# fly.toml app configuration file generated for valtrack on 2024-05-20T17:21:37+05:30
 #
 # See https://fly.io/docs/reference/configuration/ for information about how to use this file.
 #
@@ -7,20 +7,22 @@ app = 'valtrack'
 primary_region = 'ams'
 
 [build]
-  [build.args]
-    GO_VERSION = '1.22.2'
 
-[env]
-  PORT = '8080'
+[[services]]
+  internal_port = 9000
+  protocol = "tcp"
+  
+  [[services.ports]]
+    port = "9000"
 
-[http_service]
-  internal_port = 8080
-  force_https = true
-  auto_stop_machines = true
-  auto_start_machines = true
-  min_machines_running = 0
-  processes = ['app']
+[[services]]
+  internal_port = 9000
+  protocol = "udp"
 
+  [[services.ports]]
+    port = "9000"
+
+  
 [[vm]]
   memory = '1gb'
   cpu_kind = 'shared'

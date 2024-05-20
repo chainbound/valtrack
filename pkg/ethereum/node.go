@@ -70,10 +70,10 @@ func NewNode(cfg *config.NodeConfig) (*Node, error) {
 	if err != nil {
 		return nil, errors.Wrap(err, "Failed to generate discv5 key")
 	}
-	conf := config.DefaultConfig
+	conf := config.DefaultDiscConfig
 	disc, err := NewDiscoveryV5(discKey, &conf)
 
-	listenMaddr, err := MaddrFrom("0.0.0.0", 0)
+	listenMaddr, err := MaddrFrom(cfg.IP, uint(cfg.Port))
 
 	opts := []libp2p.Option{
 		libp2p.ListenAddrs(listenMaddr),
@@ -84,7 +84,6 @@ func NewNode(cfg *config.NodeConfig) (*Node, error) {
 		libp2p.DefaultMuxers,
 		libp2p.Security(noise.ID, noise.New),
 		libp2p.DisableRelay(),
-		libp2p.Ping(false),
 		libp2p.DisableMetrics(),
 	}
 

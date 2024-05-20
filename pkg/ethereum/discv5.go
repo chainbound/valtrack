@@ -61,12 +61,6 @@ func NewDiscoveryV5(pk *ecdsa.PrivateKey, discConfig *config.DiscConfig) (*Disco
 		return nil, errors.New("No bootnodes provided")
 	}
 
-	// udp address to listen
-	udpAddr := &net.UDPAddr{
-		IP:   net.ParseIP("0.0.0.0"),
-		Port: discConfig.UDP,
-	}
-
 	cfg := discover.Config{
 		PrivateKey:   pk,
 		NetRestrict:  nil,
@@ -74,6 +68,17 @@ func NewDiscoveryV5(pk *ecdsa.PrivateKey, discConfig *config.DiscConfig) (*Disco
 		Bootnodes:    discConfig.Bootnodes,
 		Log:          gethlog,
 		ValidSchemes: enode.ValidSchemes,
+	}
+
+	udpAddr, err := net.ResolveUDPAddr("udp", net.JoinHostPort(discConfig.IP, string(discConfig.UDP)))
+
+	_, exists := os.LookupEnv("FLY_APP_NAME")
+	if exists {
+		udpAddr, err = net.ResolveUDPAddr("udp", net.JoinHostPort("fly-global-services", string(discConfig.UDP)))
+	}
+
+	if err != nil {
+		errors.Wrap(err, "Failed to resolve UDP address:")
 	}
 
 	// start listening and create a connection object
