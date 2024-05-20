@@ -151,7 +151,7 @@ func (n *Node) Start(ctx context.Context) error {
 		cs := &PeerDialer{
 			host:     n.host,
 			peerChan: n.disc.out,
-			maxPeers: 30,
+			maxPeers: n.cfg.MaxPeerCount,
 			log:      log,
 		}
 		n.sup.Add(cs)

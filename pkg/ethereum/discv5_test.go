@@ -12,7 +12,7 @@ import (
 func TestSingleDiscoveryV5(t *testing.T) {
 	pk, _ := crypto.GenerateKey()
 
-	disc, err := NewDiscoveryV5(pk, &config.DefaultConfig)
+	disc, err := NewDiscoveryV5(pk, &config.DefaultDiscConfig)
 
 	if err != nil {
 		t.FailNow()
