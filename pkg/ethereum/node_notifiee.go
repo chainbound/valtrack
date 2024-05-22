@@ -3,7 +3,10 @@ package ethereum
 import (
 	"context"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/libp2p/go-libp2p/core/network"
@@ -12,6 +15,21 @@ import (
 )
 
 var _ network.Notifiee = (*Node)(nil)
+
+type MetadataReceivedEvent struct {
+	ENR        string         `json:"enr"`
+	IP         string         `json:"ip"`
+	Port       int            `json:"port"`
+	MetaData   SimpleMetaData `json:"metadata"`
+	CrawlerID  string         `json:"crawler_id"`
+	CrawlerLoc string         `json:"crawler_location"`
+}
+
+type SimpleMetaData struct {
+	SeqNumber uint64
+	Attnets   []byte
+	Syncnets  []byte
+}
 
 func (n *Node) Connected(net network.Network, c network.Conn) {
 	n.log.Debug().
@@ -122,6 +140,37 @@ func (n *Node) validatePeer(ctx context.Context, pid peer.ID, addrInfo peer.Addr
 
 	fmt.Fprintf(n.fileLogger, "%s ID: %v, SeqNum: %v, Attnets: %s, ForkDigest: %s\n",
 		time.Now().Format(time.RFC3339), pid.String(), md.SeqNumber, hex.EncodeToString(md.Attnets), hex.EncodeToString(st.ForkDigest))
+
+	// Extract the IP and Port from the address.
+	addressParts := strings.Split(addrInfo.Addrs[0].String(), "/")
+	ip := addressParts[2]
+	port, err := strconv.Atoi(addressParts[4])
+	if err != nil {
+		return false
+	}
+
+	// Publish to NATS
+	metadataEvent := MetadataReceivedEvent{
+		ENR:        pid.String(),
+		IP:         ip,
+		Port:       port,
+		MetaData:   SimpleMetaData{SeqNumber: md.SeqNumber, Attnets: md.Attnets, Syncnets: md.Syncnets},
+		CrawlerID:  getCrawlerMachineID(),
+		CrawlerLoc: getCrawlerLocation(),
+	}
+
+	eventData, err := json.Marshal(metadataEvent)
+	if err != nil {
+		n.log.Error().Err(err).Msg("Failed to marshal metadata event")
+		return false
+	}
+
+	ack, err := n.js.Publish(ctx, "events.metadata_received", eventData)
+	if err != nil {
+		n.log.Error().Err(err).Msg("Failed to publish metadata event")
+		return false
+	}
+	n.log.Debug().Msgf("Published metadata event with seq: %v", ack.Sequence)
 
 	return true
 }

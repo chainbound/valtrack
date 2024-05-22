@@ -19,6 +19,8 @@ import (
 	"github.com/libp2p/go-libp2p/p2p/security/noise"
 	"github.com/libp2p/go-libp2p/p2p/transport/tcp"
 	ma "github.com/multiformats/go-multiaddr"
+	"github.com/nats-io/nats.go"
+	"github.com/nats-io/nats.go/jetstream"
 	"github.com/pkg/errors"
 	"github.com/prysmaticlabs/prysm/v5/beacon-chain/p2p/encoder"
 	eth "github.com/prysmaticlabs/prysm/v5/proto/prysm/v1alpha1"
@@ -40,17 +42,14 @@ type PeerBackoff struct {
 
 // Node represents a node in the network with a host and configuration.
 type Node struct {
-	host    host.Host
-	cfg     *config.NodeConfig
-	reqResp *ReqResp
-	disc    *DiscoveryV5
-
-	// The suture supervisor that is the root of the service tree
-	sup *suture.Supervisor
-
-	log        zerolog.Logger
-	fileLogger *os.File
-
+	host          host.Host
+	cfg           *config.NodeConfig
+	reqResp       *ReqResp
+	disc          *DiscoveryV5
+	js            jetstream.JetStream
+	sup           *suture.Supervisor
+	log           zerolog.Logger
+	fileLogger    *os.File
 	backoffCache  map[peer.ID]*PeerBackoff
 	metadataCache map[peer.ID]*PeerMetadata
 	cacheMutex    sync.Mutex
@@ -106,6 +105,35 @@ func NewNode(cfg *config.NodeConfig) (*Node, error) {
 		return nil, fmt.Errorf("failed to create reqresp: %w", err)
 	}
 
+	url := os.Getenv("NATS_URL")
+	if url == "" {
+		url = nats.DefaultURL
+	}
+
+	// Initialize NATS JetStream
+	nc, err := nats.Connect(url)
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to NATS: %w", err)
+	}
+
+	js, err := jetstream.New(nc)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create JetStream context: %w", err)
+	}
+
+	cfgjs := jetstream.StreamConfig{
+		Name:      "EVENTS",
+		Retention: jetstream.InterestPolicy,
+		Subjects:  []string{"events.metadata_received", "events.peer_discovered"},
+	}
+
+	ctxJs := context.Background()
+
+	_, err = js.CreateOrUpdateStream(ctxJs, cfgjs)
+	if err != nil {
+		return nil, errors.Wrap(err, "Failed to create JetStream stream")
+	}
+
 	// Log the node's peer ID and addresses
 	log.Info().Str("peer_id", h.ID().String()).Any("Maddr", h.Addrs()).Msg("Initialized new libp2p Host")
 
@@ -115,6 +143,7 @@ func NewNode(cfg *config.NodeConfig) (*Node, error) {
 		cfg:           cfg,
 		reqResp:       reqResp,
 		disc:          disc,
+		js:            js,
 		sup:           suture.NewSimple("eth"),
 		log:           log,
 		fileLogger:    file,

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/ecdsa"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"net"
 	"os"
@@ -19,6 +20,8 @@ import (
 	"github.com/ethereum/go-ethereum/p2p/discover"
 	"github.com/ethereum/go-ethereum/p2p/enode"
 	ma "github.com/multiformats/go-multiaddr"
+	"github.com/nats-io/nats.go"
+	"github.com/nats-io/nats.go/jetstream"
 	"github.com/pkg/errors"
 )
 
@@ -34,6 +37,14 @@ type HostInfo struct {
 	Attr map[string]interface{}
 }
 
+type PeerDiscoveredEvent struct {
+	ENR        string `json:"enr"`
+	IP         string `json:"ip"`
+	Port       int    `json:"port"`
+	CrawlerID  string `json:"crawler_id"`
+	CrawlerLoc string `json:"crawler_location"`
+}
+
 type DiscoveryV5 struct {
 	Dv5Listener  *discover.UDPv5
 	FilterDigest string
@@ -41,9 +52,36 @@ type DiscoveryV5 struct {
 	seenNodes    map[peer.ID]bool
 	fileLogger   *os.File
 	out          chan peer.AddrInfo
+	js           jetstream.JetStream
 }
 
 func NewDiscoveryV5(pk *ecdsa.PrivateKey, discConfig *config.DiscConfig) (*DiscoveryV5, error) {
+	url := os.Getenv("NATS_URL")
+	if url == "" {
+		url = nats.DefaultURL
+	}
+
+	// Init NATS connection
+	nc, err := nats.Connect(url)
+	if err != nil {
+		return nil, errors.Wrap(err, "Failed to connect to NATS")
+	}
+
+	js, _ := jetstream.New(nc)
+
+	cfgjs := jetstream.StreamConfig{
+		Name:      "EVENTS",
+		Retention: jetstream.InterestPolicy,
+		Subjects:  []string{"events.metadata_received", "events.peer_discovered"},
+	}
+
+	ctxJs := context.Background()
+
+	_, err = js.CreateOrUpdateStream(ctxJs, cfgjs)
+	if err != nil {
+		return nil, errors.Wrap(err, "Failed to create JetStream stream")
+	}
+
 	// New geth logger at debug level
 	gethlog := glog.New()
 	log := log.NewLogger("discv5")
@@ -103,7 +141,8 @@ func NewDiscoveryV5(pk *ecdsa.PrivateKey, discConfig *config.DiscConfig) (*Disco
 		log:          log,
 		seenNodes:    make(map[peer.ID]bool),
 		fileLogger:   file,
-		out:          make(chan peer.AddrInfo),
+		out:          make(chan peer.AddrInfo, 1000),
+		js:           js,
 	}, nil
 }
 
@@ -115,6 +154,14 @@ func (d *DiscoveryV5) Serve(ctx context.Context) error {
 
 	defer iter.Close()
 	defer close(d.out)
+
+	peerEvent := PeerDiscoveredEvent{
+		ENR:        "sample_enr",
+		IP:         "192.0.2.1",
+		Port:       30303,
+		CrawlerID:  getCrawlerMachineID(),
+		CrawlerLoc: getCrawlerLocation(),
+	}
 
 	go func() {
 		defer d.fileLogger.Close()
@@ -141,6 +188,8 @@ func (d *DiscoveryV5) Serve(ctx context.Context) error {
 						Addrs: hInfo.MAddrs,
 					}
 
+					d.seenNodes[hInfo.ID] = true
+
 					d.log.Info().
 						Str("ID", hInfo.ID.String()).
 						Str("IP", hInfo.IP).
@@ -155,7 +204,23 @@ func (d *DiscoveryV5) Serve(ctx context.Context) error {
 					fmt.Fprintf(d.fileLogger, "%s ID: %s, IP: %s, Port: %d, ENR: %s, Maddr: %v, Attnets: %v, AttnetsNum: %v\n",
 						time.Now().Format(time.RFC3339), hInfo.ID.String(), hInfo.IP, hInfo.Port, node.String(), hInfo.MAddrs, hInfo.Attr[EnrAttnetsAttribute], hInfo.Attr[EnrAttnetsNumAttribute])
 
-					d.seenNodes[hInfo.ID] = true
+					// Publish to NATS
+					peerEvent.ENR = node.String()
+					peerEvent.IP = hInfo.IP
+					peerEvent.Port = hInfo.Port
+
+					eventData, err := json.Marshal(peerEvent)
+					if err != nil {
+						d.log.Error().Err(err).Msg("Failed to marshal peer event")
+						continue
+					}
+					ack, err := d.js.Publish(ctx, "events.peer_discovered", eventData)
+					if err != nil {
+						d.log.Error().Err(err).Msg("Failed to publish peer event")
+						continue
+					}
+					d.log.Debug().Msgf("Published message with seq: %v", ack.Sequence)
+
 				}
 			}
 		}
