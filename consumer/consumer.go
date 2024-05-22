@@ -22,12 +22,18 @@ type PeerDiscoveredEvent struct {
 }
 
 type MetadataReceivedEvent struct {
-	ENR           string `json:"enr"`
-	IP            string `json:"ip"`
-	Port          int    `json:"port"`
-	SSZSerialized []byte `json:"ssz_serialized"`
-	CrawlerID     string `json:"crawler_id"`
-	CrawlerLoc    string `json:"crawler_location"`
+	ENR        string         `json:"enr"`
+	IP         string         `json:"ip"`
+	Port       int            `json:"port"`
+	MetaData   SimpleMetaData `json:"metadata"`
+	CrawlerID  string         `json:"crawler_id"`
+	CrawlerLoc string         `json:"crawler_location"`
+}
+
+type SimpleMetaData struct {
+	SeqNumber uint64
+	Attnets   []byte
+	Syncnets  []byte
 }
 
 func main() {

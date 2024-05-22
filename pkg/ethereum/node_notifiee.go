@@ -148,10 +148,11 @@ func (n *Node) validatePeer(ctx context.Context, pid peer.ID, addrInfo peer.Addr
 	if err != nil {
 		return false
 	}
+	node := n.disc.seenNodes[pid].Node
 
 	// Publish to NATS
 	metadataEvent := MetadataReceivedEvent{
-		ENR:        pid.String(),
+		ENR:        node.String(),
 		IP:         ip,
 		Port:       port,
 		MetaData:   SimpleMetaData{SeqNumber: md.SeqNumber, Attnets: md.Attnets, Syncnets: md.Syncnets},

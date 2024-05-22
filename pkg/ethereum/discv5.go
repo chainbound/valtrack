@@ -45,11 +45,16 @@ type PeerDiscoveredEvent struct {
 	CrawlerLoc string `json:"crawler_location"`
 }
 
+type NodeInfo struct {
+	Node enode.Node
+	Flag bool
+}
+
 type DiscoveryV5 struct {
 	Dv5Listener  *discover.UDPv5
 	FilterDigest string
 	log          zerolog.Logger
-	seenNodes    map[peer.ID]bool
+	seenNodes    map[peer.ID]NodeInfo
 	fileLogger   *os.File
 	out          chan peer.AddrInfo
 	js           jetstream.JetStream
@@ -139,7 +144,7 @@ func NewDiscoveryV5(pk *ecdsa.PrivateKey, discConfig *config.DiscConfig) (*Disco
 		Dv5Listener:  listener,
 		FilterDigest: discConfig.ForkDigest,
 		log:          log,
-		seenNodes:    make(map[peer.ID]bool),
+		seenNodes:    make(map[peer.ID]NodeInfo),
 		fileLogger:   file,
 		out:          make(chan peer.AddrInfo, 1000),
 		js:           js,
@@ -182,13 +187,13 @@ func (d *DiscoveryV5) Serve(ctx context.Context) error {
 					continue
 				}
 
-				if hInfo != nil && !d.seenNodes[hInfo.ID] {
+				if hInfo != nil && !d.seenNodes[hInfo.ID].Flag {
 					d.out <- peer.AddrInfo{
 						ID:    hInfo.ID,
 						Addrs: hInfo.MAddrs,
 					}
 
-					d.seenNodes[hInfo.ID] = true
+					d.seenNodes[hInfo.ID] = NodeInfo{Node: *node, Flag: true}
 
 					d.log.Info().
 						Str("ID", hInfo.ID.String()).
