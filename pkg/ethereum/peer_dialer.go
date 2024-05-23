@@ -59,7 +59,7 @@ func (p *PeerDialer) Serve(ctx context.Context) error {
 
 		// finally, start the connection establishment.
 		// The success case is handled in net_notifiee.go.
-		timeoutCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		timeoutCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		_ = p.host.Connect(timeoutCtx, addrInfo) // ignore error, this happens all the time
 		cancel()
 	}

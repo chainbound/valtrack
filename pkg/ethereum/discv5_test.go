@@ -22,8 +22,6 @@ func TestSingleDiscoveryV5(t *testing.T) {
 
 	timeout := time.After(10 * time.Second)
 
-	select {
-	case <-timeout:
-		t.FailNow()
-	}
+	<-timeout
+	t.FailNow()
 }

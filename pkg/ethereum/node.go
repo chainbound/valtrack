@@ -21,14 +21,13 @@ import (
 	"github.com/pkg/errors"
 	"github.com/prysmaticlabs/prysm/v5/beacon-chain/p2p/encoder"
 	eth "github.com/prysmaticlabs/prysm/v5/proto/prysm/v1alpha1"
-	pb "github.com/prysmaticlabs/prysm/v5/proto/prysm/v1alpha1"
 	"github.com/rs/zerolog"
 	"github.com/thejerf/suture/v4"
 )
 
 type PeerMetadata struct {
 	LastSeen time.Time
-	Metadata *pb.MetaDataV1
+	Metadata *eth.MetaDataV1
 }
 
 type PeerBackoff struct {
@@ -195,11 +194,8 @@ func (n *Node) startReconnectionTimer() {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 
-	for {
-		select {
-		case <-ticker.C:
-			n.reconnectPeers()
-		}
+	for range ticker.C {
+		n.reconnectPeers()
 	}
 }
 
@@ -250,13 +246,13 @@ func (n *Node) addToBackoffCache(pid peer.ID, addrInfo peer.AddrInfo) {
 	}
 }
 
-func (n *Node) addToMetadataCache(pid peer.ID, metadata *pb.MetaDataV1) {
+func (n *Node) addToMetadataCache(pid peer.ID, metadata *eth.MetaDataV1) {
 	n.cacheMutex.Lock()
 	defer n.cacheMutex.Unlock()
 
 	n.metadataCache[pid] = &PeerMetadata{
 		LastSeen: time.Now(),
-		Metadata: &pb.MetaDataV1{},
+		Metadata: &eth.MetaDataV1{},
 	}
 
 	n.log.Debug().Str("peer", pid.String()).Msg("Added peer to metadata cache")
