@@ -57,18 +57,24 @@ func NewNode(cfg *config.NodeConfig) (*Node, error) {
 
 	file, err := os.Create("handshakes.log")
 	if err != nil {
-		return nil, errors.Wrap(err, "Failed to create log file")
+		return nil, errors.Wrap(err, "failed to create log file")
 	}
 
 	data, err := cfg.PrivateKey.Raw()
 	discKey, _ := gcrypto.ToECDSA(data)
 	if err != nil {
-		return nil, errors.Wrap(err, "Failed to generate discv5 key")
+		return nil, errors.Wrap(err, "failed to generate discv5 key")
 	}
 	conf := config.DefaultDiscConfig
 	disc, err := NewDiscoveryV5(discKey, &conf)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to create DiscoveryV5 service")
+	}
 
 	listenMaddr, err := MaddrFrom(cfg.IP, uint(cfg.Port))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create multiaddr: %w", err)
+	}
 
 	opts := []libp2p.Option{
 		libp2p.ListenAddrs(listenMaddr),
