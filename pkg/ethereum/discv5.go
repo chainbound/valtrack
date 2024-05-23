@@ -138,7 +138,7 @@ func NewDiscoveryV5(pk *ecdsa.PrivateKey, discConfig *config.DiscConfig) (*Disco
 		log:           log,
 		seenNodes:     make(map[peer.ID]NodeInfo),
 		fileLogger:    file,
-		out:           make(chan peer.AddrInfo, 100),
+		out:           make(chan peer.AddrInfo),
 		js:            js,
 		discEventChan: make(chan *PeerDiscoveredEvent, 1000),
 	}, nil

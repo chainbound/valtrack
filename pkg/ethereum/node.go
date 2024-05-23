@@ -46,8 +46,9 @@ type Node struct {
 	fileLogger        *os.File
 	backoffCache      map[peer.ID]*PeerBackoff
 	metadataCache     map[peer.ID]*PeerMetadata
-	cacheMutex        sync.Mutex
+	cacheMutex        sync.RWMutex
 	metadataEventChan chan *MetadataReceivedEvent
+	reconnectChan     chan peer.ID
 }
 
 // NewNode initializes a new Node using the provided configuration and options.
@@ -150,6 +151,7 @@ func NewNode(cfg *config.NodeConfig) (*Node, error) {
 		backoffCache:      make(map[peer.ID]*PeerBackoff),
 		metadataCache:     make(map[peer.ID]*PeerMetadata),
 		metadataEventChan: make(chan *MetadataReceivedEvent, 100),
+		reconnectChan:     make(chan peer.ID, 100),
 	}, nil
 }
 
@@ -187,6 +189,7 @@ func (n *Node) Start(ctx context.Context) error {
 
 	// Start the timer function to attempt reconnections every 30 seconds
 	go n.startReconnectionTimer()
+	n.startReconnectListener()
 
 	<-ctx.Done()
 	n.log.Info().Msg("Shutting down node services")
@@ -222,17 +225,37 @@ func (n *Node) startReconnectionTimer() {
 }
 
 func (n *Node) reconnectPeers() {
-	n.cacheMutex.Lock()
-	defer n.cacheMutex.Unlock()
+	n.cacheMutex.RLock()
+	defer n.cacheMutex.RUnlock()
+	n.log.Info().Msg("Attempting to reconnect to peers")
 
 	for pid, backoff := range n.backoffCache {
 		if time.Since(backoff.LastSeen) >= 30*time.Second && backoff.BackoffCounter < 10 {
 			n.log.Debug().Str("peer", pid.String()).Int("backoff_counter", backoff.BackoffCounter).Msg("Attempting to reconnect to peer")
+			n.reconnectChan <- pid
+		} else if backoff.BackoffCounter >= 10 {
+			n.log.Debug().Str("peer", pid.String()).Int("backoff_counter", backoff.BackoffCounter).Msg("Removing peer from backoff cache")
+			n.removeFromBackoffCache(pid)
+		}
+	}
+}
+
+func (n *Node) startReconnectListener() {
+	go func() {
+		for pid := range n.reconnectChan {
+			n.cacheMutex.RLock()
+			backoff, exists := n.backoffCache[pid]
+			n.cacheMutex.RUnlock()
+
+			if !exists {
+				continue
+			}
 
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			err := n.host.Connect(ctx, backoff.AddrInfo)
 			cancel()
 
+			n.cacheMutex.Lock()
 			if err != nil {
 				n.log.Debug().Str("peer", pid.String()).Msg("Failed to reconnect to peer")
 				backoff.LastSeen = time.Now()
@@ -240,8 +263,9 @@ func (n *Node) reconnectPeers() {
 			} else {
 				n.log.Info().Str("peer", pid.String()).Msg("Successfully reconnected to peer")
 			}
+			n.cacheMutex.Unlock()
 		}
-	}
+	}()
 }
 
 func (n *Node) addToBackoffCache(pid peer.ID, addrInfo peer.AddrInfo) {
@@ -268,16 +292,14 @@ func (n *Node) addToBackoffCache(pid peer.ID, addrInfo peer.AddrInfo) {
 }
 
 func (n *Node) removeFromBackoffCache(pid peer.ID) {
-	n.cacheMutex.Lock()
-	defer n.cacheMutex.Unlock()
-
+	// NOTE: Removing the peer so no need to lock the cache
 	delete(n.backoffCache, pid)
 	n.log.Debug().Str("peer", pid.String()).Msg("Removed peer from backoff cache")
 }
 
 func (n *Node) getBackoffCounter(pid peer.ID) int {
-	n.cacheMutex.Lock()
-	defer n.cacheMutex.Unlock()
+	n.cacheMutex.RLock()
+	defer n.cacheMutex.RUnlock()
 
 	backoff, exists := n.backoffCache[pid]
 	if !exists {
@@ -290,9 +312,7 @@ func (n *Node) getBackoffCounter(pid peer.ID) int {
 func (n *Node) addToMetadataCache(pid peer.ID, metadata *eth.MetaDataV1) {
 	n.removeFromBackoffCache(pid)
 
-	n.cacheMutex.Lock()
-	defer n.cacheMutex.Unlock()
-
+	// NOTE: Peer ID will be unique, so no need to lock the cache
 	n.metadataCache[pid] = &PeerMetadata{
 		LastSeen: time.Now(),
 		Metadata: metadata,
@@ -301,14 +321,14 @@ func (n *Node) addToMetadataCache(pid peer.ID, metadata *eth.MetaDataV1) {
 	n.log.Debug().Str("peer", pid.String()).Str("metadata", metadata.String()).Msg("Added peer to metadata cache")
 }
 
-func (n *Node) getMetadataFromCache(pid peer.ID) (*PeerMetadata, error) {
-	n.cacheMutex.Lock()
-	defer n.cacheMutex.Unlock()
+func (n *Node) getMetadataFromCache(pid peer.ID) *PeerMetadata {
+	n.cacheMutex.RLock()
+	defer n.cacheMutex.RUnlock()
 
 	metadata, exists := n.metadataCache[pid]
 	if !exists {
-		return nil, fmt.Errorf("metadata not found for peer: %s", pid)
+		return nil
 	}
 
-	return metadata, nil
+	return metadata
 }

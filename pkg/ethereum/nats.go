@@ -59,7 +59,7 @@ func (n *Node) sendMetadataEvent(ctx context.Context, pid peer.ID, addrInfo peer
 
 	select {
 	case n.metadataEventChan <- metadataEvent:
-		n.log.Debug().Msg("Sent metadata_received event to channel")
+		n.log.Debug().Str("peer", pid.String()).Msg("Sent metadata_received event to channel")
 	case <-ctx.Done():
 		n.log.Warn().Msg("Context cancelled before sending metadata_received event to channel")
 	}
@@ -98,7 +98,7 @@ func (d *DiscoveryV5) sendPeerEvent(ctx context.Context, node *enode.Node, hInfo
 
 	select {
 	case d.discEventChan <- peerEvent:
-		d.log.Debug().Msg("Sent peer_discovered event to channel")
+		d.log.Debug().Str("peer", node.ID().String()).Msg("Sent peer_discovered event to channel")
 	case <-ctx.Done():
 		d.log.Warn().Msg("Context cancelled before sending peer_discovered event to channel")
 	}

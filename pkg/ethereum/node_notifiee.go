@@ -28,7 +28,7 @@ func (n *Node) Connected(net network.Network, c network.Conn) {
 }
 
 func (n *Node) Disconnected(net network.Network, c network.Conn) {
-	if _, err := n.getMetadataFromCache(c.RemotePeer()); err == nil {
+	if n.getMetadataFromCache(c.RemotePeer()) != nil {
 		n.log.Info().
 			Str("peer", c.RemotePeer().String()).
 			Msg("Disconnected from handshaked peer")
@@ -54,10 +54,15 @@ func (n *Node) handleOutboundConnection(pid peer.ID) {
 
 	if !valid {
 		n.log.Info().Str("peer", pid.String()).Msg("Handshake failed")
-		n.host.Peerstore().RemovePeer(pid) // NOTE: Figure out the reason for removing
+		// n.host.Peerstore().RemovePeer(pid) // NOTE: Figure out the reason for removing
 	}
 
-	n.reqResp.Goodbye(ctx, pid, 3) // NOTE: Figure out the correct reason code
+	ctxGoodbye, cancelGoodbye := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancelGoodbye()
+	err := n.reqResp.Goodbye(ctxGoodbye, pid, 3) // NOTE: Figure out the correct reason code
+	if err != nil {
+		n.log.Debug().Str("peer", pid.String()).Err(err).Msg("Failed to send goodbye message")
+	}
 	n.host.Network().ClosePeer(pid)
 }
 
