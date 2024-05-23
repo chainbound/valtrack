@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/ecdsa"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"net"
 	"os"
@@ -37,27 +36,20 @@ type HostInfo struct {
 	Attr map[string]interface{}
 }
 
-type PeerDiscoveredEvent struct {
-	ENR        string `json:"enr"`
-	IP         string `json:"ip"`
-	Port       int    `json:"port"`
-	CrawlerID  string `json:"crawler_id"`
-	CrawlerLoc string `json:"crawler_location"`
-}
-
 type NodeInfo struct {
 	Node enode.Node
 	Flag bool
 }
 
 type DiscoveryV5 struct {
-	Dv5Listener  *discover.UDPv5
-	FilterDigest string
-	log          zerolog.Logger
-	seenNodes    map[peer.ID]NodeInfo
-	fileLogger   *os.File
-	out          chan peer.AddrInfo
-	js           jetstream.JetStream
+	Dv5Listener   *discover.UDPv5
+	FilterDigest  string
+	log           zerolog.Logger
+	seenNodes     map[peer.ID]NodeInfo
+	fileLogger    *os.File
+	out           chan peer.AddrInfo
+	js            jetstream.JetStream
+	discEventChan chan *PeerDiscoveredEvent
 }
 
 func NewDiscoveryV5(pk *ecdsa.PrivateKey, discConfig *config.DiscConfig) (*DiscoveryV5, error) {
@@ -141,13 +133,14 @@ func NewDiscoveryV5(pk *ecdsa.PrivateKey, discConfig *config.DiscConfig) (*Disco
 	}
 
 	return &DiscoveryV5{
-		Dv5Listener:  listener,
-		FilterDigest: discConfig.ForkDigest,
-		log:          log,
-		seenNodes:    make(map[peer.ID]NodeInfo),
-		fileLogger:   file,
-		out:          make(chan peer.AddrInfo, 1000),
-		js:           js,
+		Dv5Listener:   listener,
+		FilterDigest:  discConfig.ForkDigest,
+		log:           log,
+		seenNodes:     make(map[peer.ID]NodeInfo),
+		fileLogger:    file,
+		out:           make(chan peer.AddrInfo, 100),
+		js:            js,
+		discEventChan: make(chan *PeerDiscoveredEvent, 1000),
 	}, nil
 }
 
@@ -156,6 +149,8 @@ func (d *DiscoveryV5) Serve(ctx context.Context) error {
 
 	// Start iterating over randomly discovered nodes
 	iter := d.Dv5Listener.RandomNodes()
+
+	d.startDiscoveryPublisher()
 
 	defer iter.Close()
 	defer close(d.out)
@@ -203,8 +198,8 @@ func (d *DiscoveryV5) Serve(ctx context.Context) error {
 					fmt.Fprintf(d.fileLogger, "%s ID: %s, IP: %s, Port: %d, ENR: %s, Maddr: %v, Attnets: %v, AttnetsNum: %v\n",
 						time.Now().Format(time.RFC3339), hInfo.ID.String(), hInfo.IP, hInfo.Port, node.String(), hInfo.MAddrs, hInfo.Attr[EnrAttnetsAttribute], hInfo.Attr[EnrAttnetsNumAttribute])
 
-					// Publish to NATS
-					go d.publishPeerEvent(ctx, node, hInfo)
+					// Send peer event to channel
+					d.sendPeerEvent(ctx, node, hInfo)
 				}
 			}
 		}
@@ -212,33 +207,6 @@ func (d *DiscoveryV5) Serve(ctx context.Context) error {
 
 	<-ctx.Done()
 	return ctx.Err()
-}
-
-func (d *DiscoveryV5) publishPeerEvent(ctx context.Context, node *enode.Node, hInfo *HostInfo) {
-	publishCtx, publishCancel := context.WithTimeout(context.Background(), 3*time.Second) // Adjust the timeout as needed
-	defer publishCancel()
-
-	// Prepare the peer discovered event
-	peerEvent := PeerDiscoveredEvent{
-		ENR:        node.String(),
-		IP:         hInfo.IP,
-		Port:       hInfo.Port,
-		CrawlerID:  getCrawlerMachineID(),
-		CrawlerLoc: getCrawlerLocation(),
-	}
-
-	eventData, err := json.Marshal(peerEvent)
-	if err != nil {
-		d.log.Error().Err(err).Msg("Failed to marshal peer event")
-		return
-	}
-
-	ack, err := d.js.Publish(publishCtx, "events.peer_discovered", eventData)
-	if err != nil {
-		d.log.Error().Err(err).Msg("Failed to publish peer event")
-		return
-	}
-	d.log.Debug().Msgf("Published discovered event with seq: %v", ack.Sequence)
 }
 
 // handleENR parses and identifies all the advertised fields of a newly discovered peer

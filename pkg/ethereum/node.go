@@ -37,16 +37,17 @@ type PeerBackoff struct {
 
 // Node represents a node in the network with a host and configuration.
 type Node struct {
-	host          host.Host
-	cfg           *config.NodeConfig
-	reqResp       *ReqResp
-	disc          *DiscoveryV5
-	js            jetstream.JetStream
-	log           zerolog.Logger
-	fileLogger    *os.File
-	backoffCache  map[peer.ID]*PeerBackoff
-	metadataCache map[peer.ID]*PeerMetadata
-	cacheMutex    sync.Mutex
+	host              host.Host
+	cfg               *config.NodeConfig
+	reqResp           *ReqResp
+	disc              *DiscoveryV5
+	js                jetstream.JetStream
+	log               zerolog.Logger
+	fileLogger        *os.File
+	backoffCache      map[peer.ID]*PeerBackoff
+	metadataCache     map[peer.ID]*PeerMetadata
+	cacheMutex        sync.Mutex
+	metadataEventChan chan *MetadataReceivedEvent
 }
 
 // NewNode initializes a new Node using the provided configuration and options.
@@ -139,15 +140,16 @@ func NewNode(cfg *config.NodeConfig) (*Node, error) {
 
 	// Return the fully initialized Node
 	return &Node{
-		host:          h,
-		cfg:           cfg,
-		reqResp:       reqResp,
-		disc:          disc,
-		js:            js,
-		log:           log,
-		fileLogger:    file,
-		backoffCache:  make(map[peer.ID]*PeerBackoff),
-		metadataCache: make(map[peer.ID]*PeerMetadata),
+		host:              h,
+		cfg:               cfg,
+		reqResp:           reqResp,
+		disc:              disc,
+		js:                js,
+		log:               log,
+		fileLogger:        file,
+		backoffCache:      make(map[peer.ID]*PeerBackoff),
+		metadataCache:     make(map[peer.ID]*PeerMetadata),
+		metadataEventChan: make(chan *MetadataReceivedEvent, 100),
 	}, nil
 }
 
@@ -172,6 +174,8 @@ func (n *Node) Start(ctx context.Context) error {
 
 	// Register the node itself as the notifiee for network connection events
 	n.host.Network().Notify(n)
+
+	n.startMetadataPublisher()
 
 	// Start the discovery service
 	go n.runDiscovery(ctx)
