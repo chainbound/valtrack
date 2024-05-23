@@ -175,7 +175,7 @@ func (r *ReqResp) wrapStreamHandler(ctx context.Context, name string, handler Co
 			agentVersion = "n.a."
 		}
 
-		r.log.Debug().Any("protocol", s.Protocol()).Str("peer", s.Conn().RemotePeer().String()).Msg("Stream Opened")
+		r.log.Debug().Any("protocol", s.Protocol()).Str("peer", s.Conn().RemotePeer().String()).Str("client_version", agentVersion).Msg("Stream Opened")
 
 		// Ensure the stream is reset on handler exit, which is a no-op if the stream is already closed.
 		defer s.Reset()

@@ -84,6 +84,7 @@ func (n *Node) handleOutboundConnection(pid peer.ID) {
 func (n *Node) handleInboundConnection(pid peer.ID) {
 	n.log.Info().Str("peer", pid.String()).Msg("Handling new inbound connection")
 
+	// NOTE: This timeout will be used for all the operations in this function
 	ctx, cancel := context.WithTimeout(context.Background(), n.cfg.DialTimeout)
 	defer cancel()
 
@@ -108,20 +109,20 @@ func (n *Node) handleInboundConnection(pid peer.ID) {
 func (n *Node) validatePeer(ctx context.Context, pid peer.ID, addrInfo peer.AddrInfo) bool {
 	st, err := n.reqResp.Status(ctx, pid)
 	if err != nil {
-		n.log.Debug().Str("peer", pid.String()).Msg("Failed to get status from peer")
+		n.log.Debug().Str("peer", pid.String()).Err(err).Msg("Failed to get status from peer")
 		n.addToBackoffCache(pid, addrInfo)
 		return false
 	}
 
 	if err := n.reqResp.Ping(ctx, pid); err != nil {
-		n.log.Debug().Str("peer", pid.String()).Msg("Failed to ping peer")
+		n.log.Debug().Str("peer", pid.String()).Err(err).Msg("Failed to ping peer")
 		n.addToBackoffCache(pid, addrInfo)
 		return false
 	}
 
 	md, err := n.reqResp.MetaData(ctx, pid)
 	if err != nil {
-		n.log.Debug().Str("peer", pid.String()).Msg("Failed to get metadata from peer")
+		n.log.Debug().Str("peer", pid.String()).Err(err).Msg("Failed to get metadata from peer")
 		n.addToBackoffCache(pid, addrInfo)
 		return false
 	}

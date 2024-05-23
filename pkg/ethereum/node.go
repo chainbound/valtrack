@@ -279,10 +279,10 @@ func (n *Node) addToMetadataCache(pid peer.ID, metadata *eth.MetaDataV1) {
 
 	n.metadataCache[pid] = &PeerMetadata{
 		LastSeen: time.Now(),
-		Metadata: &eth.MetaDataV1{},
+		Metadata: metadata,
 	}
 
-	n.log.Debug().Str("peer", pid.String()).Msg("Added peer to metadata cache")
+	n.log.Debug().Str("peer", pid.String()).Str("metadata", metadata.String()).Msg("Added peer to metadata cache")
 }
 
 func (n *Node) getMetadataFromCache(pid peer.ID) (*PeerMetadata, error) {

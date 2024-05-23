@@ -81,7 +81,7 @@ var DefaultNodeConfig NodeConfig = NodeConfig{
 	BeaconConfig: nil,
 	ForkDigest:   [4]byte{0x6a, 0x95, 0xa1, 0xa9},
 	Encoder:      encoder.SszNetworkEncoder{},
-	DialTimeout:  5 * time.Second,
+	DialTimeout:  10 * time.Second,
 	MaxPeerCount: 30,
 	IP:           "0.0.0.0",
 	Port:         9000,
