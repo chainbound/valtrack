@@ -211,7 +211,7 @@ func (n *Node) reconnectPeers() {
 
 	for pid, backoff := range n.backoffCache {
 		if time.Since(backoff.LastSeen) >= 30*time.Second && backoff.BackoffCounter < 10 {
-			n.log.Debug().Str("peer", pid.String()).Msg("Attempting to reconnect to peer")
+			n.log.Debug().Str("peer", pid.String()).Int("backoff_counter", backoff.BackoffCounter).Msg("Attempting to reconnect to peer")
 
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			err := n.host.Connect(ctx, backoff.AddrInfo)
@@ -223,7 +223,6 @@ func (n *Node) reconnectPeers() {
 				backoff.BackoffCounter++
 			} else {
 				n.log.Info().Str("peer", pid.String()).Msg("Successfully reconnected to peer")
-				delete(n.backoffCache, pid)
 			}
 		}
 	}
@@ -252,7 +251,29 @@ func (n *Node) addToBackoffCache(pid peer.ID, addrInfo peer.AddrInfo) {
 	}
 }
 
+func (n *Node) removeFromBackoffCache(pid peer.ID) {
+	n.cacheMutex.Lock()
+	defer n.cacheMutex.Unlock()
+
+	delete(n.backoffCache, pid)
+	n.log.Debug().Str("peer", pid.String()).Msg("Removed peer from backoff cache")
+}
+
+func (n *Node) getBackoffCounter(pid peer.ID) int {
+	n.cacheMutex.Lock()
+	defer n.cacheMutex.Unlock()
+
+	backoff, exists := n.backoffCache[pid]
+	if !exists {
+		return 0
+	}
+
+	return backoff.BackoffCounter
+}
+
 func (n *Node) addToMetadataCache(pid peer.ID, metadata *eth.MetaDataV1) {
+	n.removeFromBackoffCache(pid)
+
 	n.cacheMutex.Lock()
 	defer n.cacheMutex.Unlock()
 

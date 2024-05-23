@@ -160,14 +160,6 @@ func (d *DiscoveryV5) Serve(ctx context.Context) error {
 	defer iter.Close()
 	defer close(d.out)
 
-	peerEvent := PeerDiscoveredEvent{
-		ENR:        "sample_enr",
-		IP:         "192.0.2.1",
-		Port:       30303,
-		CrawlerID:  getCrawlerMachineID(),
-		CrawlerLoc: getCrawlerLocation(),
-	}
-
 	go func() {
 		defer d.fileLogger.Close()
 
@@ -212,22 +204,7 @@ func (d *DiscoveryV5) Serve(ctx context.Context) error {
 						time.Now().Format(time.RFC3339), hInfo.ID.String(), hInfo.IP, hInfo.Port, node.String(), hInfo.MAddrs, hInfo.Attr[EnrAttnetsAttribute], hInfo.Attr[EnrAttnetsNumAttribute])
 
 					// Publish to NATS
-					peerEvent.ENR = node.String()
-					peerEvent.IP = hInfo.IP
-					peerEvent.Port = hInfo.Port
-
-					eventData, err := json.Marshal(peerEvent)
-					if err != nil {
-						d.log.Error().Err(err).Msg("Failed to marshal peer event")
-						continue
-					}
-					ack, err := d.js.Publish(ctx, "events.peer_discovered", eventData)
-					if err != nil {
-						d.log.Error().Err(err).Msg("Failed to publish peer event")
-						continue
-					}
-					d.log.Debug().Msgf("Published discovered event with seq: %v", ack.Sequence)
-
+					go d.publishPeerEvent(ctx, node, hInfo)
 				}
 			}
 		}
@@ -235,6 +212,33 @@ func (d *DiscoveryV5) Serve(ctx context.Context) error {
 
 	<-ctx.Done()
 	return ctx.Err()
+}
+
+func (d *DiscoveryV5) publishPeerEvent(ctx context.Context, node *enode.Node, hInfo *HostInfo) {
+	publishCtx, publishCancel := context.WithTimeout(context.Background(), 3*time.Second) // Adjust the timeout as needed
+	defer publishCancel()
+
+	// Prepare the peer discovered event
+	peerEvent := PeerDiscoveredEvent{
+		ENR:        node.String(),
+		IP:         hInfo.IP,
+		Port:       hInfo.Port,
+		CrawlerID:  getCrawlerMachineID(),
+		CrawlerLoc: getCrawlerLocation(),
+	}
+
+	eventData, err := json.Marshal(peerEvent)
+	if err != nil {
+		d.log.Error().Err(err).Msg("Failed to marshal peer event")
+		return
+	}
+
+	ack, err := d.js.Publish(publishCtx, "events.peer_discovered", eventData)
+	if err != nil {
+		d.log.Error().Err(err).Msg("Failed to publish peer event")
+		return
+	}
+	d.log.Debug().Msgf("Published discovered event with seq: %v", ack.Sequence)
 }
 
 // handleENR parses and identifies all the advertised fields of a newly discovered peer

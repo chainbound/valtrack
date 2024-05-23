@@ -73,8 +73,8 @@ func (n *Node) handleOutboundConnection(pid peer.ID) {
 	valid := n.validatePeer(ctx, pid, peer.AddrInfo{ID: pid, Addrs: addrs[:1]})
 
 	if !valid {
-		n.log.Info().Str("peer", pid.String()).Msg("Handshake failed, disconnecting")
-		n.host.Peerstore().RemovePeer(pid)
+		n.log.Info().Str("peer", pid.String()).Msg("Handshake failed")
+		n.host.Peerstore().RemovePeer(pid) // NOTE: Figure out the reason for removing
 	}
 
 	n.reqResp.Goodbye(ctx, pid, 3) // NOTE: Figure out the correct reason code
