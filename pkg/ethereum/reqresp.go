@@ -131,7 +131,7 @@ func (r *ReqResp) SetStatus(status *pb.Status) {
 
 // RegisterHandlers registers all RPC handlers. It verifies that initial status and metadata are valid.
 func (r *ReqResp) RegisterHandlers(ctx context.Context) error {
-	fmt.Println("Registering RPC handlers")
+	r.log.Info().Msg("Registering RPC handlers")
 
 	r.statusMu.RLock()
 	defer r.statusMu.RUnlock()

@@ -22,7 +22,6 @@ import (
 	"github.com/prysmaticlabs/prysm/v5/beacon-chain/p2p/encoder"
 	eth "github.com/prysmaticlabs/prysm/v5/proto/prysm/v1alpha1"
 	"github.com/rs/zerolog"
-	"github.com/thejerf/suture/v4"
 )
 
 type PeerMetadata struct {
@@ -43,7 +42,6 @@ type Node struct {
 	reqResp       *ReqResp
 	disc          *DiscoveryV5
 	js            jetstream.JetStream
-	sup           *suture.Supervisor
 	log           zerolog.Logger
 	fileLogger    *os.File
 	backoffCache  map[peer.ID]*PeerBackoff
@@ -146,7 +144,6 @@ func NewNode(cfg *config.NodeConfig) (*Node, error) {
 		reqResp:       reqResp,
 		disc:          disc,
 		js:            js,
-		sup:           suture.NewSimple("eth"),
 		log:           log,
 		fileLogger:    file,
 		backoffCache:  make(map[peer.ID]*PeerBackoff),
@@ -171,29 +168,44 @@ func (n *Node) Start(ctx context.Context) error {
 		return fmt.Errorf("register RPC handlers: %w", err)
 	}
 
+	n.log.Info().Msg("Starting node services")
+
 	// Register the node itself as the notifiee for network connection events
 	n.host.Network().Notify(n)
 
 	// Start the discovery service
-	n.sup.Add(n.disc)
+	go n.runDiscovery(ctx)
 
-	log := log.NewLogger("peer_dialer")
+	// Start the peer dialer service
 	for i := 0; i < 16; i++ {
-		cs := &PeerDialer{
-			host:     n.host,
-			peerChan: n.disc.out,
-			maxPeers: n.cfg.MaxPeerCount,
-			log:      log,
-		}
-		n.sup.Add(cs)
+		go n.runPeerDialer(ctx)
 	}
 
 	// Start the timer function to attempt reconnections every 30 seconds
 	go n.startReconnectionTimer()
 
-	n.log.Info().Msg("Starting node services")
+	<-ctx.Done()
+	n.log.Info().Msg("Shutting down node services")
 
-	return n.sup.Serve(ctx)
+	return nil
+}
+
+func (n *Node) runDiscovery(ctx context.Context) {
+	if err := n.disc.Serve(ctx); err != nil && ctx.Err() == nil {
+		n.log.Error().Err(err).Msg("DiscoveryV5 service stopped unexpectedly")
+	}
+}
+
+func (n *Node) runPeerDialer(ctx context.Context) {
+	cs := &PeerDialer{
+		host:     n.host,
+		peerChan: n.disc.out,
+		maxPeers: n.cfg.MaxPeerCount,
+		log:      log.NewLogger("peer_dialer"),
+	}
+	if err := cs.Serve(ctx); err != nil && ctx.Err() == nil {
+		n.log.Error().Err(err).Msg("PeerDialer service stopped unexpectedly")
+	}
 }
 
 func (n *Node) startReconnectionTimer() {

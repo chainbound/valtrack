@@ -7,7 +7,6 @@ import (
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/rs/zerolog"
-	"github.com/thejerf/suture/v4"
 )
 
 // PeerDialer is a suture service that reads peers from the peerChan (which
@@ -20,8 +19,6 @@ type PeerDialer struct {
 	maxPeers int
 	log      zerolog.Logger
 }
-
-var _ suture.Service = (*PeerDialer)(nil)
 
 func (p *PeerDialer) Serve(ctx context.Context) error {
 	p.log.Debug().Msg("Started Peer Dialer Service")
