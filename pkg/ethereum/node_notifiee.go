@@ -27,7 +27,7 @@ type MetadataReceivedEvent struct {
 
 type SimpleMetaData struct {
 	SeqNumber uint64
-	Attnets   []byte
+	Attnets   string
 	Syncnets  []byte
 }
 
@@ -134,8 +134,8 @@ func (n *Node) validatePeer(ctx context.Context, pid peer.ID, addrInfo peer.Addr
 
 	n.log.Info().
 		Str("peer", pid.String()).
-		Int("seq", int(md.SeqNumber)).
-		Str("attnets", hex.EncodeToString(md.Attnets)).
+		Int("Seq", int(md.SeqNumber)).
+		Str("Attnets", hex.EncodeToString(md.Attnets)).
 		Msg("Performed successful handshake")
 
 	fmt.Fprintf(n.fileLogger, "%s ID: %v, SeqNum: %v, Attnets: %s, ForkDigest: %s\n",
@@ -155,7 +155,7 @@ func (n *Node) validatePeer(ctx context.Context, pid peer.ID, addrInfo peer.Addr
 		ENR:        node.String(),
 		IP:         ip,
 		Port:       port,
-		MetaData:   SimpleMetaData{SeqNumber: md.SeqNumber, Attnets: md.Attnets, Syncnets: md.Syncnets},
+		MetaData:   SimpleMetaData{SeqNumber: md.SeqNumber, Attnets: (hex.EncodeToString(md.Attnets)), Syncnets: md.Syncnets},
 		CrawlerID:  getCrawlerMachineID(),
 		CrawlerLoc: getCrawlerLocation(),
 	}

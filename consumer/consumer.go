@@ -32,7 +32,7 @@ type MetadataReceivedEvent struct {
 
 type SimpleMetaData struct {
 	SeqNumber uint64
-	Attnets   []byte
+	Attnets   string
 	Syncnets  []byte
 }
 

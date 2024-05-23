@@ -188,9 +188,13 @@ func (d *DiscoveryV5) Serve(ctx context.Context) error {
 				}
 
 				if hInfo != nil && !d.seenNodes[hInfo.ID].Flag {
-					d.out <- peer.AddrInfo{
+					select {
+					case d.out <- peer.AddrInfo{
 						ID:    hInfo.ID,
 						Addrs: hInfo.MAddrs,
+					}:
+					default:
+						d.log.Debug().Msg("Disc out channel is full")
 					}
 
 					d.seenNodes[hInfo.ID] = NodeInfo{Node: *node, Flag: true}
@@ -199,10 +203,8 @@ func (d *DiscoveryV5) Serve(ctx context.Context) error {
 						Str("ID", hInfo.ID.String()).
 						Str("IP", hInfo.IP).
 						Int("Port", hInfo.Port).
-						Str("ENR", node.String()).
-						Any("Maddr", hInfo.MAddrs).
 						Any("Attnets", hInfo.Attr[EnrAttnetsAttribute]).
-						Any("AttnetsNum", hInfo.Attr[EnrAttnetsNumAttribute]).
+						Str("ENR", node.String()).
 						Msg("Discovered new node")
 
 					// Log to file
@@ -284,7 +286,7 @@ func WithIPAndPorts(ip string, port int) RemoteHostOptions {
 		h.Port = port
 
 		// Compose Multiaddress from data
-		mAddr, err := ma.NewMultiaddr(fmt.Sprintf("/ip4/%s/tcp/%d", ip, port))
+		mAddr, err := MaddrFrom(ip, uint(port))
 		if err != nil {
 			return err
 		}
