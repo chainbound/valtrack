@@ -8,35 +8,15 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/chainbound/valtrack/log"
+	"github.com/chainbound/valtrack/pkg/ethereum"
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
+	"github.com/rs/zerolog"
 )
 
-// Define the event structures
-type PeerDiscoveredEvent struct {
-	ENR        string `json:"enr"`
-	IP         string `json:"ip"`
-	Port       int    `json:"port"`
-	CrawlerID  string `json:"crawler_id"`
-	CrawlerLoc string `json:"crawler_location"`
-}
-
-type MetadataReceivedEvent struct {
-	ENR        string         `json:"enr"`
-	IP         string         `json:"ip"`
-	Port       int            `json:"port"`
-	MetaData   SimpleMetaData `json:"metadata"`
-	CrawlerID  string         `json:"crawler_id"`
-	CrawlerLoc string         `json:"crawler_location"`
-}
-
-type SimpleMetaData struct {
-	SeqNumber uint64
-	Attnets   string
-	Syncnets  []byte
-}
-
 func main() {
+	log := log.NewLogger("consumer")
 	// Set up NATS connection
 	url := os.Getenv("NATS_URL")
 	if url == "" {
@@ -94,7 +74,7 @@ func main() {
 				}
 
 				for msg := range msgs.Messages() {
-					handleMessage(msg)
+					handleMessage(log, msg)
 				}
 			}
 		}
@@ -104,25 +84,26 @@ func main() {
 	select {} // Run forever
 }
 
-func handleMessage(msg jetstream.Msg) {
+func handleMessage(log zerolog.Logger, msg jetstream.Msg) {
+	MsgMetadata, _ := msg.Metadata()
 	switch msg.Subject() {
 	case "events.peer_discovered":
-		var event PeerDiscoveredEvent
+		var event ethereum.PeerDiscoveredEvent
 		if err := json.Unmarshal(msg.Data(), &event); err != nil {
 			fmt.Printf("Error unmarshaling PeerDiscoveredEvent: %v\n", err)
 			msg.Term()
 			return
 		}
-		fmt.Printf("Received PeerDiscoveredEvent: %+v\n", event)
+		log.Info().Any("Seq", MsgMetadata.Sequence).Any("event", event).Msg("peer_discovered")
 
 	case "events.metadata_received":
-		var event MetadataReceivedEvent
+		var event ethereum.MetadataReceivedEvent
 		if err := json.Unmarshal(msg.Data(), &event); err != nil {
 			fmt.Printf("Error unmarshaling MetadataReceivedEvent: %v\n", err)
 			msg.Term()
 			return
 		}
-		fmt.Printf("Received MetadataReceivedEvent: %+v\n", event)
+		log.Info().Any("Seq", MsgMetadata.Sequence).Any("event", event).Msg("metadata_received")
 
 	default:
 		fmt.Printf("Unknown event type: %s\n", msg.Subject())

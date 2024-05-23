@@ -12,12 +12,14 @@ import (
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 	ma "github.com/multiformats/go-multiaddr"
+	eth "github.com/prysmaticlabs/prysm/v5/proto/prysm/v1alpha1"
 )
 
 var _ network.Notifiee = (*Node)(nil)
 
 type MetadataReceivedEvent struct {
 	ENR        string         `json:"enr"`
+	ID         string         `json:"id"`
 	IP         string         `json:"ip"`
 	Port       int            `json:"port"`
 	MetaData   SimpleMetaData `json:"metadata"`
@@ -39,11 +41,9 @@ func (n *Node) Connected(net network.Network, c network.Conn) {
 		Msg("Connected Peer")
 
 	if c.Stat().Direction == network.DirOutbound {
-		go n.handleNewConnection(c.RemotePeer())
+		go n.handleOutboundConnection(c.RemotePeer())
 	} else if c.Stat().Direction == network.DirInbound {
 		go n.handleInboundConnection(c.RemotePeer())
-	} else {
-		n.log.Info().Str("peer", c.RemotePeer().String()).Msg("Unknown connection direction")
 	}
 }
 
@@ -59,7 +59,7 @@ func (n *Node) Listen(net network.Network, maddr ma.Multiaddr) {}
 
 func (n *Node) ListenClose(net network.Network, maddr ma.Multiaddr) {}
 
-func (n *Node) handleNewConnection(pid peer.ID) {
+func (n *Node) handleOutboundConnection(pid peer.ID) {
 	n.log.Info().Str("peer", pid.String()).Msg("Handling new outbound connection")
 
 	ctx, cancel := context.WithTimeout(context.Background(), n.cfg.DialTimeout)
@@ -76,8 +76,6 @@ func (n *Node) handleNewConnection(pid peer.ID) {
 		n.log.Info().Str("peer", pid.String()).Msg("Handshake failed, disconnecting")
 		n.host.Peerstore().RemovePeer(pid)
 	}
-
-	n.log.Info().Str("peer", pid.String()).Msg("Outbound connection established")
 
 	n.reqResp.Goodbye(ctx, pid, 3) // NOTE: Figure out the correct reason code
 	n.host.Network().ClosePeer(pid)
@@ -102,8 +100,6 @@ func (n *Node) handleInboundConnection(pid peer.ID) {
 		n.host.Network().ClosePeer(pid)
 		return
 	}
-
-	n.log.Info().Str("peer", pid.String()).Msg("Inbound connection established")
 
 	n.reqResp.Goodbye(ctx, pid, 3) // NOTE: Figure out the correct reason code
 	n.host.Network().ClosePeer(pid)
@@ -141,18 +137,31 @@ func (n *Node) validatePeer(ctx context.Context, pid peer.ID, addrInfo peer.Addr
 	fmt.Fprintf(n.fileLogger, "%s ID: %v, SeqNum: %v, Attnets: %s, ForkDigest: %s\n",
 		time.Now().Format(time.RFC3339), pid.String(), md.SeqNumber, hex.EncodeToString(md.Attnets), hex.EncodeToString(st.ForkDigest))
 
+	// Start the publishing process in a separate goroutine
+	go n.publishMetadataEvent(ctx, pid, addrInfo, md)
+
+	return true
+}
+
+func (n *Node) publishMetadataEvent(ctx context.Context, pid peer.ID, addrInfo peer.AddrInfo, md *eth.MetaDataV1) {
+	// Create a separate context for the publishing operation
+	publishCtx, publishCancel := context.WithTimeout(context.Background(), 3*time.Second) // Adjust the timeout as needed
+	defer publishCancel()
+
 	// Extract the IP and Port from the address.
 	addressParts := strings.Split(addrInfo.Addrs[0].String(), "/")
 	ip := addressParts[2]
 	port, err := strconv.Atoi(addressParts[4])
 	if err != nil {
-		return false
+		n.log.Error().Err(err).Msg("Failed to convert port to int")
+		return
 	}
 	node := n.disc.seenNodes[pid].Node
 
 	// Publish to NATS
 	metadataEvent := MetadataReceivedEvent{
 		ENR:        node.String(),
+		ID:         pid.String(),
 		IP:         ip,
 		Port:       port,
 		MetaData:   SimpleMetaData{SeqNumber: md.SeqNumber, Attnets: (hex.EncodeToString(md.Attnets)), Syncnets: md.Syncnets},
@@ -163,15 +172,13 @@ func (n *Node) validatePeer(ctx context.Context, pid peer.ID, addrInfo peer.Addr
 	eventData, err := json.Marshal(metadataEvent)
 	if err != nil {
 		n.log.Error().Err(err).Msg("Failed to marshal metadata event")
-		return false
+		return
 	}
 
-	ack, err := n.js.Publish(ctx, "events.metadata_received", eventData)
+	ack, err := n.js.Publish(publishCtx, "events.metadata_received", eventData)
 	if err != nil {
 		n.log.Error().Err(err).Msg("Failed to publish metadata event")
-		return false
+		return
 	}
 	n.log.Debug().Msgf("Published metadata event with seq: %v", ack.Sequence)
-
-	return true
 }

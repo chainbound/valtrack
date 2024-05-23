@@ -226,7 +226,7 @@ func (d *DiscoveryV5) Serve(ctx context.Context) error {
 						d.log.Error().Err(err).Msg("Failed to publish peer event")
 						continue
 					}
-					d.log.Debug().Msgf("Published message with seq: %v", ack.Sequence)
+					d.log.Debug().Msgf("Published discovered event with seq: %v", ack.Sequence)
 
 				}
 			}
