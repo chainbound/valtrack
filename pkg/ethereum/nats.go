@@ -69,20 +69,22 @@ func (n *Node) startMetadataPublisher() {
 	go func() {
 		for metadataEvent := range n.metadataEventChan {
 			publishCtx, publishCancel := context.WithTimeout(context.Background(), 3*time.Second)
-			defer publishCancel()
 
 			eventData, err := json.Marshal(metadataEvent)
 			if err != nil {
 				n.log.Error().Err(err).Msg("Failed to marshal metadata_received event")
+				publishCancel()
 				continue
 			}
 
 			ack, err := n.js.Publish(publishCtx, "events.metadata_received", eventData)
 			if err != nil {
 				n.log.Error().Err(err).Msg("Failed to publish metadata_received event")
+				publishCancel()
 				continue
 			}
 			n.log.Debug().Msgf("Published metadata_received event with seq: %v", ack.Sequence)
+			publishCancel()
 		}
 	}()
 }
@@ -108,20 +110,22 @@ func (disc *DiscoveryV5) startDiscoveryPublisher() {
 	go func() {
 		for discoveryEvent := range disc.discEventChan {
 			publishCtx, publishCancel := context.WithTimeout(context.Background(), 3*time.Second)
-			defer publishCancel()
 
 			eventData, err := json.Marshal(discoveryEvent)
 			if err != nil {
 				disc.log.Error().Err(err).Msg("Failed to marshal peer_discovered event")
+				publishCancel()
 				continue
 			}
 
 			ack, err := disc.js.Publish(publishCtx, "events.peer_discovered", eventData)
 			if err != nil {
 				disc.log.Error().Err(err).Msg("Failed to publish peer_discovered event")
+				publishCancel()
 				continue
 			}
 			disc.log.Debug().Msgf("Published peer_discovered event with seq: %v", ack.Sequence)
+			publishCancel()
 		}
 	}()
 }

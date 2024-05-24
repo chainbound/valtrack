@@ -292,7 +292,9 @@ func (n *Node) addToBackoffCache(pid peer.ID, addrInfo peer.AddrInfo) {
 }
 
 func (n *Node) removeFromBackoffCache(pid peer.ID) {
-	// NOTE: Removing the peer so no need to lock the cache
+	n.cacheMutex.Lock()
+	defer n.cacheMutex.Unlock()
+
 	delete(n.backoffCache, pid)
 	n.log.Debug().Str("peer", pid.String()).Msg("Removed peer from backoff cache")
 }
