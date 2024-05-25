@@ -247,27 +247,35 @@ func (n *Node) reconnectPeers() {
 func (n *Node) startReconnectListener() {
 	go func() {
 		for pid := range n.reconnectChan {
-			n.cacheMutex.RLock()
-			backoff, exists := n.backoffCache[pid]
-			n.cacheMutex.RUnlock()
+			go func() {
+				n.cacheMutex.RLock()
+				backoff, exists := n.backoffCache[pid]
+				n.cacheMutex.RUnlock()
 
-			if !exists {
-				continue
-			}
+				if !exists {
+					return
+				}
 
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			err := n.host.Connect(ctx, backoff.AddrInfo)
-			cancel()
+				ctx, cancel := context.WithTimeout(context.Background(), n.cfg.DialTimeout)
+				err := n.host.Connect(ctx, backoff.AddrInfo)
+				cancel()
 
-			n.cacheMutex.Lock()
-			if err != nil {
-				n.log.Debug().Str("peer", pid.String()).Msg("Failed to reconnect to peer")
-				backoff.LastSeen = time.Now()
-				backoff.BackoffCounter++
-			} else {
-				n.log.Info().Str("peer", pid.String()).Msg("Successfully reconnected to peer")
-			}
-			n.cacheMutex.Unlock()
+				if err != nil {
+					n.cacheMutex.Lock()
+
+					backoff := n.backoffCache[pid]
+
+					backoff.LastSeen = time.Now()
+					backoff.BackoffCounter += 1
+
+					n.cacheMutex.Unlock()
+
+					n.log.Debug().Str("peer", pid.String()).Int("backoff_counter", backoff.BackoffCounter).Msg("Failed to reconnect to peer")
+				} else {
+					n.log.Info().Str("peer", pid.String()).Msg("Successfully reconnected to peer")
+				}
+
+			}()
 		}
 	}()
 }
