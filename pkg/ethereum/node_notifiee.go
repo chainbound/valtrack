@@ -16,7 +16,7 @@ import (
 var _ network.Notifiee = (*Node)(nil)
 
 func (n *Node) Connected(net network.Network, c network.Conn) {
-	n.log.Debug().
+	n.log.Info().
 		Str("peer", c.RemotePeer().String()).
 		Str("dir", c.Stat().Direction.String()).
 		Int("total", len(n.host.Network().Peers())).
@@ -42,8 +42,6 @@ func (n *Node) Listen(net network.Network, maddr ma.Multiaddr) {}
 func (n *Node) ListenClose(net network.Network, maddr ma.Multiaddr) {}
 
 func (n *Node) handleOutboundConnection(pid peer.ID) {
-	n.log.Info().Str("peer", pid.String()).Msg("Handling new outbound connection")
-
 	ctx, cancel := context.WithTimeout(context.Background(), n.cfg.DialTimeout)
 	defer cancel()
 
@@ -62,7 +60,8 @@ func (n *Node) handleOutboundConnection(pid peer.ID) {
 
 	addrs := n.host.Peerstore().Addrs(pid)
 	if len(addrs) == 0 {
-		n.log.Fatal().Str("No addresses found for peer", pid.String())
+		n.log.Error().Str("peer", pid.String()).Msg("No addresses found for peer")
+		return
 	}
 
 	addrInfo := peer.AddrInfo{ID: pid, Addrs: addrs[:1]}
@@ -102,6 +101,7 @@ func (n *Node) handleInboundConnection(pid peer.ID) {
 		n.log.Fatal().Str("No addresses found for peer", pid.String())
 	}
 
+	// TODO: this is gonna be different for inbound connections
 	addrInfo := peer.AddrInfo{ID: pid, Addrs: addrs[:1]}
 	if err := n.validatePeer(ctx, pid, addrInfo); err != nil {
 		n.log.Warn().Str("peer", pid.String()).Err(err).Msg("Handshake failed")

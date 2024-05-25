@@ -66,23 +66,23 @@ var DefaultDiscConfig DiscConfig = DiscConfig{
 
 // NodeConfig holds additional configuration options for the node.
 type NodeConfig struct {
-	PrivateKey   *crypto.Secp256k1PrivateKey
-	BeaconConfig *params.BeaconChainConfig
-	ForkDigest   [4]byte
-	Encoder      encoder.NetworkEncoding
-	DialTimeout  time.Duration
-	MaxPeerCount int
-	IP           string
-	Port         int
+	PrivateKey        *crypto.Secp256k1PrivateKey
+	BeaconConfig      *params.BeaconChainConfig
+	ForkDigest        [4]byte
+	Encoder           encoder.NetworkEncoding
+	DialTimeout       time.Duration
+	ConcurrentDialers int
+	IP                string
+	Port              int
 }
 
 var DefaultNodeConfig NodeConfig = NodeConfig{
-	PrivateKey:   nil,
-	BeaconConfig: nil,
-	ForkDigest:   [4]byte{0x6a, 0x95, 0xa1, 0xa9},
-	Encoder:      encoder.SszNetworkEncoder{},
-	DialTimeout:  10 * time.Second,
-	MaxPeerCount: 30,
-	IP:           "0.0.0.0",
-	Port:         9000,
+	PrivateKey:        nil,
+	BeaconConfig:      nil,
+	ForkDigest:        [4]byte{0x6a, 0x95, 0xa1, 0xa9},
+	Encoder:           encoder.SszNetworkEncoder{},
+	DialTimeout:       10 * time.Second,
+	ConcurrentDialers: 64,
+	IP:                "0.0.0.0",
+	Port:              9000,
 }

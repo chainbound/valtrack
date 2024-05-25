@@ -187,7 +187,7 @@ func (n *Node) Start(ctx context.Context) error {
 	go n.runDiscovery(ctx)
 
 	// Start the peer dialer service
-	for i := 0; i < 16; i++ {
+	for i := 0; i < n.cfg.ConcurrentDialers; i++ {
 		go n.runPeerDialer(ctx)
 	}
 
