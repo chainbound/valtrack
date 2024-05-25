@@ -305,9 +305,6 @@ func (r *ReqResp) Goodbye(ctx context.Context, pid peer.ID, code uint64) error {
 		return fmt.Errorf("write goodbye request: %w", err)
 	}
 
-	// we have the data that we want, so ignore error here
-	_ = stream.Close() // (both sides should actually be already closed)
-
 	return nil
 }
 
