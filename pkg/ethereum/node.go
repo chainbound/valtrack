@@ -16,6 +16,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/p2p/security/noise"
 	"github.com/libp2p/go-libp2p/p2p/transport/tcp"
+	gomplex "github.com/libp2p/go-mplex"
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
 	"github.com/pkg/errors"
@@ -76,6 +77,7 @@ func NewNode(cfg *config.NodeConfig) (*Node, error) {
 		return nil, fmt.Errorf("failed to create multiaddr: %w", err)
 	}
 
+	gomplex.ResetStreamTimeout = 5 * time.Second
 	opts := []libp2p.Option{
 		libp2p.ListenAddrs(listenMaddr),
 		libp2p.Identity(cfg.PrivateKey),
@@ -93,6 +95,8 @@ func NewNode(cfg *config.NodeConfig) (*Node, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to create libp2p host: %w", err)
 	}
+
+	log.Info().Any("listen_addrs", h.Network().ListenAddresses()).Msg("Created new libp2p host")
 
 	reqRespCfg := &ReqRespConfig{
 		ForkDigest:   cfg.ForkDigest,
@@ -207,7 +211,6 @@ func (n *Node) runPeerDialer(ctx context.Context) {
 	cs := &PeerDialer{
 		host:     n.host,
 		peerChan: n.disc.out,
-		maxPeers: n.cfg.MaxPeerCount,
 		log:      log.NewLogger("peer_dialer"),
 	}
 	if err := cs.Serve(ctx); err != nil && ctx.Err() == nil {

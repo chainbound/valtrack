@@ -349,9 +349,6 @@ func (r *ReqResp) Status(ctx context.Context, pid peer.ID) (status *pb.Status, e
 		r.SetStatus(resp)
 	}
 
-	// we have the data that we want, so ignore error here
-	_ = stream.Close() // (both sides should actually be already closed)
-
 	return resp, nil
 }
 
@@ -378,9 +375,6 @@ func (r *ReqResp) Ping(ctx context.Context, pid peer.ID) error {
 		return fmt.Errorf("read ping response: %w", err)
 	}
 
-	// we have the data that we want, so ignore error here
-	_ = stream.Close() // (both sides should actually be already closed)
-
 	return nil
 }
 
@@ -397,9 +391,6 @@ func (r *ReqResp) MetaData(ctx context.Context, pid peer.ID) (resp *pb.MetaDataV
 	if err := r.readResponse(ctx, stream, resp); err != nil {
 		return resp, fmt.Errorf("read ping response: %w", err)
 	}
-
-	// we have the data that we want, so ignore error here
-	_ = stream.Close() // (both sides should actually be already closed)
 
 	return resp, nil
 }

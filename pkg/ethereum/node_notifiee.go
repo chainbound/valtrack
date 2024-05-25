@@ -9,6 +9,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 	ma "github.com/multiformats/go-multiaddr"
+	"github.com/pkg/errors"
 )
 
 var _ network.Notifiee = (*Node)(nil)
@@ -50,11 +51,14 @@ func (n *Node) handleOutboundConnection(pid peer.ID) {
 		n.log.Fatal().Str("No addresses found for peer", pid.String())
 	}
 
-	valid := n.validatePeer(ctx, pid, peer.AddrInfo{ID: pid, Addrs: addrs[:1]})
+	addrInfo := peer.AddrInfo{ID: pid, Addrs: addrs[:1]}
+	if err := n.validatePeer(ctx, pid, addrInfo); err != nil {
+		n.log.Warn().Str("peer", pid.String()).Err(err).Msg("Handshake failed")
+		n.addToBackoffCache(pid, addrInfo)
 
-	if !valid {
-		n.log.Info().Str("peer", pid.String()).Msg("Handshake failed")
-		// n.host.Peerstore().RemovePeer(pid) // NOTE: Figure out the reason for removing
+		n.host.Peerstore().RemovePeer(pid)
+		n.host.Network().ClosePeer(pid)
+		return
 	}
 
 	ctxGoodbye, cancelGoodbye := context.WithTimeout(context.Background(), 2*time.Second)
@@ -78,10 +82,11 @@ func (n *Node) handleInboundConnection(pid peer.ID) {
 		n.log.Fatal().Str("No addresses found for peer", pid.String())
 	}
 
-	valid := n.validatePeer(ctx, pid, peer.AddrInfo{ID: pid, Addrs: addrs[:1]})
+	addrInfo := peer.AddrInfo{ID: pid, Addrs: addrs[:1]}
+	if err := n.validatePeer(ctx, pid, addrInfo); err != nil {
+		n.log.Warn().Str("peer", pid.String()).Err(err).Msg("Handshake failed")
+		n.addToBackoffCache(pid, addrInfo)
 
-	if !valid {
-		n.log.Info().Str("peer", pid.String()).Msg("Handshake failed, disconnecting")
 		n.host.Peerstore().RemovePeer(pid)
 		n.host.Network().ClosePeer(pid)
 		return
@@ -91,25 +96,19 @@ func (n *Node) handleInboundConnection(pid peer.ID) {
 	n.host.Network().ClosePeer(pid)
 }
 
-func (n *Node) validatePeer(ctx context.Context, pid peer.ID, addrInfo peer.AddrInfo) bool {
+func (n *Node) validatePeer(ctx context.Context, pid peer.ID, addrInfo peer.AddrInfo) error {
 	st, err := n.reqResp.Status(ctx, pid)
 	if err != nil {
-		n.log.Debug().Str("peer", pid.String()).Err(err).Msg("Failed to get status from peer")
-		n.addToBackoffCache(pid, addrInfo)
-		return false
+		return errors.Wrap(err, "Failed to get status from peer")
 	}
 
 	if err := n.reqResp.Ping(ctx, pid); err != nil {
-		n.log.Debug().Str("peer", pid.String()).Err(err).Msg("Failed to ping peer")
-		n.addToBackoffCache(pid, addrInfo)
-		return false
+		return errors.Wrap(err, "Failed to ping peer")
 	}
 
 	md, err := n.reqResp.MetaData(ctx, pid)
 	if err != nil {
-		n.log.Debug().Str("peer", pid.String()).Err(err).Msg("Failed to get metadata from peer")
-		n.addToBackoffCache(pid, addrInfo)
-		return false
+		return errors.Wrap(err, "Failed to get metadata from peer")
 	}
 
 	n.sendMetadataEvent(ctx, pid, addrInfo, md)
@@ -124,5 +123,5 @@ func (n *Node) validatePeer(ctx context.Context, pid peer.ID, addrInfo peer.Addr
 	fmt.Fprintf(n.fileLogger, "%s ID: %v, SeqNum: %v, Attnets: %s, ForkDigest: %s\n",
 		time.Now().Format(time.RFC3339), pid.String(), md.SeqNumber, hex.EncodeToString(md.Attnets), hex.EncodeToString(st.ForkDigest))
 
-	return true
+	return nil
 }

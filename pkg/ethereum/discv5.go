@@ -126,6 +126,7 @@ func NewDiscoveryV5(pk *ecdsa.PrivateKey, discConfig *config.DiscConfig) (*Disco
 	if err != nil {
 		return nil, errors.Wrap(err, "Failed to start discv5 listener")
 	}
+	log.Info().Str("udp_addr", udpAddr.String()).Msg("Listening on UDP")
 
 	file, err := os.Create(discConfig.LogPath)
 	if err != nil {

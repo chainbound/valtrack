@@ -16,7 +16,6 @@ import (
 type PeerDialer struct {
 	host     host.Host
 	peerChan <-chan peer.AddrInfo
-	maxPeers int
 	log      zerolog.Logger
 }
 
