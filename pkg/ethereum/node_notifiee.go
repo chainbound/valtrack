@@ -46,6 +46,19 @@ func (n *Node) handleOutboundConnection(pid peer.ID) {
 	ctx, cancel := context.WithTimeout(context.Background(), n.cfg.DialTimeout)
 	defer cancel()
 
+	// Cleanup function
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+
+		err := n.reqResp.Goodbye(ctx, pid, 3) // NOTE: Figure out the correct reason code
+		if err != nil {
+			n.log.Debug().Str("peer", pid.String()).Err(err).Msg("Failed to send goodbye message")
+		}
+
+		n.host.Network().ClosePeer(pid)
+	}()
+
 	addrs := n.host.Peerstore().Addrs(pid)
 	if len(addrs) == 0 {
 		n.log.Fatal().Str("No addresses found for peer", pid.String())
@@ -56,18 +69,11 @@ func (n *Node) handleOutboundConnection(pid peer.ID) {
 		n.log.Warn().Str("peer", pid.String()).Err(err).Msg("Handshake failed")
 		n.addToBackoffCache(pid, addrInfo)
 
-		n.host.Peerstore().RemovePeer(pid)
-		n.host.Network().ClosePeer(pid)
+		// TODO: Should we remove peer?
+		// n.host.Peerstore().RemovePeer(pid)
 		return
 	}
 
-	ctxGoodbye, cancelGoodbye := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancelGoodbye()
-	err := n.reqResp.Goodbye(ctxGoodbye, pid, 3) // NOTE: Figure out the correct reason code
-	if err != nil {
-		n.log.Debug().Str("peer", pid.String()).Err(err).Msg("Failed to send goodbye message")
-	}
-	n.host.Network().ClosePeer(pid)
 }
 
 func (n *Node) handleInboundConnection(pid peer.ID) {
@@ -77,6 +83,19 @@ func (n *Node) handleInboundConnection(pid peer.ID) {
 	ctx, cancel := context.WithTimeout(context.Background(), n.cfg.DialTimeout)
 	defer cancel()
 
+	// Cleanup function
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+
+		err := n.reqResp.Goodbye(ctx, pid, 3) // NOTE: Figure out the correct reason code
+		if err != nil {
+			n.log.Debug().Str("peer", pid.String()).Err(err).Msg("Failed to send goodbye message")
+		}
+
+		n.host.Network().ClosePeer(pid)
+	}()
+
 	addrs := n.host.Peerstore().Addrs(pid)
 	if len(addrs) == 0 {
 		n.log.Fatal().Str("No addresses found for peer", pid.String())
@@ -87,13 +106,10 @@ func (n *Node) handleInboundConnection(pid peer.ID) {
 		n.log.Warn().Str("peer", pid.String()).Err(err).Msg("Handshake failed")
 		n.addToBackoffCache(pid, addrInfo)
 
-		n.host.Peerstore().RemovePeer(pid)
-		n.host.Network().ClosePeer(pid)
+		// TODO: Should we remove peer?
+		// n.host.Peerstore().RemovePeer(pid)
 		return
 	}
-
-	n.reqResp.Goodbye(ctx, pid, 3) // NOTE: Figure out the correct reason code
-	n.host.Network().ClosePeer(pid)
 }
 
 func (n *Node) validatePeer(ctx context.Context, pid peer.ID, addrInfo peer.AddrInfo) error {
