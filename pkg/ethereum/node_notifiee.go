@@ -21,21 +21,24 @@ func (n *Node) Connected(net network.Network, c network.Conn) {
 	if _, ok := n.backoffCache[pid]; ok {
 		n.log.Debug().Str(c.RemotePeer().String(), "Peer already in backoff cache, disconnecting...")
 
-		// Cleanup function
-		// Don't do anything if we're already disconnected
-		if n.host.Network().Connectedness(pid) != network.Connected {
-			return
-		}
+		// Don't block here
+		go func() {
+			// Cleanup function
+			// Don't do anything if we're already disconnected
+			if n.host.Network().Connectedness(pid) != network.Connected {
+				return
+			}
 
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		defer cancel()
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
 
-		err := n.reqResp.Goodbye(ctx, pid, 3) // NOTE: Figure out the correct reason code
-		if err != nil {
-			n.log.Debug().Str("peer", pid.String()).Err(err).Msg("Failed to send goodbye message")
-		}
+			err := n.reqResp.Goodbye(ctx, pid, 3) // NOTE: Figure out the correct reason code
+			if err != nil {
+				n.log.Debug().Str("peer", pid.String()).Err(err).Msg("Failed to send goodbye message")
+			}
 
-		n.host.Network().ClosePeer(pid)
+			n.host.Network().ClosePeer(pid)
+		}()
 
 		return
 	}
