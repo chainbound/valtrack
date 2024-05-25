@@ -16,17 +16,40 @@ import (
 var _ network.Notifiee = (*Node)(nil)
 
 func (n *Node) Connected(net network.Network, c network.Conn) {
+	pid := c.RemotePeer()
+
+	if _, ok := n.backoffCache[pid]; ok {
+		n.log.Debug().Str(c.RemotePeer().String(), "Peer already in backoff cache, disconnecting...")
+
+		// Cleanup function
+		// Don't do anything if we're already disconnected
+		if n.host.Network().Connectedness(pid) != network.Connected {
+			return
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+
+		err := n.reqResp.Goodbye(ctx, pid, 3) // NOTE: Figure out the correct reason code
+		if err != nil {
+			n.log.Debug().Str("peer", pid.String()).Err(err).Msg("Failed to send goodbye message")
+		}
+
+		n.host.Network().ClosePeer(pid)
+
+		return
+	}
 
 	n.log.Info().
-		Str("peer", c.RemotePeer().String()).
+		Str("peer", pid.String()).
 		Str("dir", c.Stat().Direction.String()).
 		Int("total", len(n.host.Network().Peers())).
 		Msg("Connected Peer")
 
 	if c.Stat().Direction == network.DirOutbound {
-		go n.handleOutboundConnection(c.RemotePeer())
+		go n.handleOutboundConnection(pid)
 	} else if c.Stat().Direction == network.DirInbound {
-		go n.handleInboundConnection(c.RemotePeer())
+		go n.handleInboundConnection(pid)
 	}
 }
 
