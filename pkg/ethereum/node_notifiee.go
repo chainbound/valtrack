@@ -16,6 +16,7 @@ import (
 var _ network.Notifiee = (*Node)(nil)
 
 func (n *Node) Connected(net network.Network, c network.Conn) {
+
 	n.log.Info().
 		Str("peer", c.RemotePeer().String()).
 		Str("dir", c.Stat().Direction.String()).
@@ -47,6 +48,11 @@ func (n *Node) handleOutboundConnection(pid peer.ID) {
 
 	// Cleanup function
 	defer func() {
+		// Don't do anything if we're already disconnected
+		if n.host.Network().Connectedness(pid) != network.Connected {
+			return
+		}
+
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
 
@@ -85,6 +91,10 @@ func (n *Node) handleInboundConnection(pid peer.ID) {
 
 	// Cleanup function
 	defer func() {
+		if n.host.Network().Connectedness(pid) != network.Connected {
+			return
+		}
+
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
 
