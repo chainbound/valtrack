@@ -1,6 +1,7 @@
 package ethereum
 
 import (
+	"bytes"
 	"context"
 	"encoding/hex"
 	"fmt"
@@ -116,6 +117,13 @@ func (n *Node) validatePeer(ctx context.Context, pid peer.ID, addrInfo peer.Addr
 	st, err := n.reqResp.Status(ctx, pid)
 	if err != nil {
 		return errors.Wrap(err, "Failed to get status from peer")
+	}
+
+	// If the status head slot is higher than the current, update it
+	if bytes.Equal(st.ForkDigest, n.cfg.ForkDigest[:]) {
+		if st.HeadSlot > n.reqResp.status.HeadSlot {
+			n.reqResp.SetStatus(st)
+		}
 	}
 
 	if err := n.reqResp.Ping(ctx, pid); err != nil {
