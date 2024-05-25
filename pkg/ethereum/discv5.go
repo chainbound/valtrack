@@ -187,11 +187,12 @@ func (d *DiscoveryV5) Serve(ctx context.Context) error {
 					d.seenNodes[hInfo.ID] = NodeInfo{Node: *node, Flag: true}
 
 					d.log.Info().
-						Str("ID", hInfo.ID.String()).
-						Str("IP", hInfo.IP).
-						Int("Port", hInfo.Port).
-						Any("Attnets", hInfo.Attr[EnrAttnetsAttribute]).
-						Str("ENR", node.String()).
+						Str("id", hInfo.ID.String()).
+						Str("ip", hInfo.IP).
+						Int("port", hInfo.Port).
+						Any("attnets", hInfo.Attr[EnrAttnetsAttribute]).
+						Str("enr", node.String()).
+						Int("total", len(d.seenNodes)).
 						Msg("Discovered new node")
 
 					// Log to file
