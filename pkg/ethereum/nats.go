@@ -15,6 +15,7 @@ import (
 
 type PeerDiscoveredEvent struct {
 	ENR        string `json:"enr"`
+	ID         string `json:"id"`
 	IP         string `json:"ip"`
 	Port       int    `json:"port"`
 	CrawlerID  string `json:"crawler_id"`
@@ -92,6 +93,7 @@ func (n *Node) startMetadataPublisher() {
 func (d *DiscoveryV5) sendPeerEvent(ctx context.Context, node *enode.Node, hInfo *HostInfo) {
 	peerEvent := &PeerDiscoveredEvent{
 		ENR:        node.String(),
+		ID:         hInfo.ID.String(),
 		IP:         hInfo.IP,
 		Port:       hInfo.Port,
 		CrawlerID:  getCrawlerMachineID(),
