@@ -71,7 +71,7 @@ func (n *Node) handleOutboundConnection(pid peer.ID) {
 		return
 	}
 
-	addrInfo := peer.AddrInfo{ID: pid, Addrs: addrs[:1]}
+	addrInfo := peer.AddrInfo{ID: pid, Addrs: addrs}
 	if err := n.validatePeer(ctx, pid, addrInfo); err != nil {
 		n.log.Warn().Str("peer", pid.String()).Err(err).Msg("Handshake failed")
 		n.addToBackoffCache(pid, addrInfo)
@@ -123,10 +123,11 @@ func (n *Node) handleInboundConnection(pid peer.ID) {
 
 	addrs := n.host.Peerstore().Addrs(pid)
 	if len(addrs) == 0 {
-		n.log.Fatal().Str("No addresses found for peer", pid.String())
+		n.log.Error().Str("peer", pid.String()).Msg("No addresses found on inbound peer")
+		return
 	}
 
-	addrInfo := peer.AddrInfo{ID: pid, Addrs: addrs[:1]}
+	addrInfo := peer.AddrInfo{ID: pid, Addrs: addrs}
 
 	n.sendMetadataEvent(ctx, pid, addrInfo, md)
 	n.addToMetadataCache(pid, md)
