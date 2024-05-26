@@ -9,6 +9,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/prysmaticlabs/prysm/v5/beacon-chain/p2p/encoder"
 	"github.com/prysmaticlabs/prysm/v5/config/params"
+	"github.com/prysmaticlabs/prysm/v5/network/forks"
 	pb "github.com/prysmaticlabs/prysm/v5/proto/prysm/v1alpha1"
 )
 
@@ -71,15 +72,16 @@ func (d *DiscConfig) Eth2EnrEntry() (enr.Entry, error) {
 	// currentSlot := slots.Since(genesisTime)
 	// currentEpoch := slots.ToEpoch(currentSlot)
 
-	// nextForkVersion, nextForkEpoch, err := forks.NextForkData(currentEpoch)
-	// if err != nil {
-	// 	return nil, fmt.Errorf("calculate next fork data: %w", err)
-	// }
+	// TODO: not hardcoded
+	nextForkVersion, nextForkEpoch, err := forks.NextForkData(286168)
+	if err != nil {
+		return nil, fmt.Errorf("calculate next fork data: %w", err)
+	}
 
 	enrForkID := &pb.ENRForkID{
 		CurrentForkDigest: d.ForkDigest[:],
-		// NextForkVersion:   nextForkVersion[:],
-		// NextForkEpoch:     nextForkEpoch,
+		NextForkVersion:   nextForkVersion[:],
+		NextForkEpoch:     nextForkEpoch,
 	}
 
 	enc, err := enrForkID.MarshalSSZ()

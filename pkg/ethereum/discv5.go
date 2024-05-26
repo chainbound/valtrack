@@ -103,7 +103,11 @@ func NewDiscoveryV5(pk *ecdsa.PrivateKey, discConfig *config.DiscConfig) (*Disco
 
 	ethNode.Set(attnetsEntry())
 
-	eth2, _ := discConfig.Eth2EnrEntry()
+	eth2, err := discConfig.Eth2EnrEntry()
+	if err != nil {
+		return nil, err
+	}
+
 	ethNode.Set(eth2)
 
 	if len(discConfig.Bootnodes) == 0 {
