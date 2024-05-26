@@ -107,22 +107,6 @@ func (n *Node) handleInboundConnection(pid peer.ID) {
 		n.host.Network().ClosePeer(pid)
 	}()
 
-	addrs := n.host.Peerstore().Addrs(pid)
-	if len(addrs) == 0 {
-		n.log.Fatal().Str("No addresses found for peer", pid.String())
-	}
-
-	// TODO: this is gonna be different for inbound connections
-	addrInfo := peer.AddrInfo{ID: pid, Addrs: addrs[:1]}
-	if err := n.validatePeer(ctx, pid, addrInfo); err != nil {
-		n.log.Warn().Str("peer", pid.String()).Err(err).Msg("Handshake failed")
-		n.addToBackoffCache(pid, addrInfo)
-
-		// TODO: Should we remove peer?
-		// n.host.Peerstore().RemovePeer(pid)
-		return
-	}
-
 	// Sleep 5 seconds to allow the handshake to complete
 	// TODO: this should be handled in the shared peerstore, i.e. saving the status message
 	time.Sleep(5 * time.Second)
@@ -136,6 +120,13 @@ func (n *Node) handleInboundConnection(pid peer.ID) {
 		n.log.Warn().Str("peer", pid.String()).Err(err).Msg("Failed requesting metadata")
 		return
 	}
+
+	addrs := n.host.Peerstore().Addrs(pid)
+	if len(addrs) == 0 {
+		n.log.Fatal().Str("No addresses found for peer", pid.String())
+	}
+
+	addrInfo := peer.AddrInfo{ID: pid, Addrs: addrs[:1]}
 
 	n.sendMetadataEvent(ctx, pid, addrInfo, md)
 	n.addToMetadataCache(pid, md)
