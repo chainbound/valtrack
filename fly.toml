@@ -9,21 +9,21 @@ primary_region = 'ams'
 [build]
 
 [[services]]
-  internal_port = 9000
-  protocol = "tcp"
-  
-  [[services.ports]]
-    port = "9000"
+# Libp2p port (needs to run on IPv6)
+internal_port = 9000
+protocol = "tcp"
+
+[[services.ports]]
+port = "9000"
 
 [[services]]
-  internal_port = 9000
-  protocol = "udp"
+internal_port = 9000
+protocol = "udp"
 
-  [[services.ports]]
-    port = "9000"
+[[services.ports]]
+port = "9000"
 
-  
 [[vm]]
-  memory = '1gb'
-  cpu_kind = 'shared'
-  cpus = 1
+memory = '1gb'
+cpu_kind = 'shared'
+cpus = 1

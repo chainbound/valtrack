@@ -123,11 +123,11 @@ func NewDiscoveryV5(pk *ecdsa.PrivateKey, discConfig *config.DiscConfig) (*Disco
 		ValidSchemes: enode.ValidSchemes,
 	}
 
-	udpAddr, err := net.ResolveUDPAddr("udp", net.JoinHostPort(discConfig.IP, string(discConfig.UDP)))
+	udpAddr, err := net.ResolveUDPAddr("udp", net.JoinHostPort(discConfig.IP, fmt.Sprint(discConfig.UDP)))
 
 	_, exists := os.LookupEnv("FLY_APP_NAME")
 	if exists {
-		udpAddr, err = net.ResolveUDPAddr("udp", net.JoinHostPort("fly-global-services", string(discConfig.UDP)))
+		udpAddr, err = net.ResolveUDPAddr("udp", net.JoinHostPort("fly-global-services", fmt.Sprint(discConfig.UDP)))
 	}
 
 	if err != nil {

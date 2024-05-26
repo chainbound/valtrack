@@ -59,7 +59,7 @@ type DiscConfig struct {
 }
 
 var DefaultDiscConfig DiscConfig = DiscConfig{
-	IP:         "0.0.0.0",
+	IP:         "::",
 	UDP:        9000,
 	TCP:        9000,
 	DBPath:     "",
@@ -111,6 +111,6 @@ var DefaultNodeConfig NodeConfig = NodeConfig{
 	Encoder:           encoder.SszNetworkEncoder{},
 	DialTimeout:       10 * time.Second,
 	ConcurrentDialers: 64,
-	IP:                "0.0.0.0",
+	IP:                "::",
 	Port:              9000,
 }
