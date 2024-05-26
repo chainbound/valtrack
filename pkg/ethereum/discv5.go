@@ -18,6 +18,7 @@ import (
 	glog "github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/p2p/discover"
 	"github.com/ethereum/go-ethereum/p2p/enode"
+	"github.com/ethereum/go-ethereum/p2p/enr"
 	ma "github.com/multiformats/go-multiaddr"
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
@@ -91,6 +92,13 @@ func NewDiscoveryV5(pk *ecdsa.PrivateKey, discConfig *config.DiscConfig) (*Disco
 
 	// Generate a Enode with custom ENR
 	ethNode := enode.NewLocalNode(enodeDB, pk)
+
+	// Set the enr entries
+	udpEntry := enr.UDP(discConfig.UDP)
+	ethNode.Set(udpEntry)
+
+	tcpEntry := enr.TCP(discConfig.TCP)
+	ethNode.Set(tcpEntry)
 
 	if len(discConfig.Bootnodes) == 0 {
 		return nil, errors.New("No bootnodes provided")
@@ -187,12 +195,15 @@ func (d *DiscoveryV5) Serve(ctx context.Context) error {
 
 					d.seenNodes[hInfo.ID] = NodeInfo{Node: *node, Flag: true}
 
+					externalIp := d.Dv5Listener.LocalNode().Node().IP()
+
 					d.log.Info().
 						Str("id", hInfo.ID.String()).
 						Str("ip", hInfo.IP).
 						Int("port", hInfo.Port).
 						Any("attnets", hInfo.Attr[EnrAttnetsAttribute]).
 						Str("enr", node.String()).
+						Str("external_ip", externalIp.String()).
 						Int("total", len(d.seenNodes)).
 						Msg("Discovered new node")
 

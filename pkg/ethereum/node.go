@@ -66,6 +66,8 @@ func NewNode(cfg *config.NodeConfig) (*Node, error) {
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to generate discv5 key")
 	}
+
+	// TODO: read config from node config
 	conf := config.DefaultDiscConfig
 	disc, err := NewDiscoveryV5(discKey, &conf)
 	if err != nil {
