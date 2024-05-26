@@ -122,6 +122,32 @@ func (n *Node) handleInboundConnection(pid peer.ID) {
 		// n.host.Peerstore().RemovePeer(pid)
 		return
 	}
+
+	// Sleep 5 seconds to allow the handshake to complete
+	// TODO: this should be handled in the shared peerstore, i.e. saving the status message
+	time.Sleep(5 * time.Second)
+	if n.host.Network().Connectedness(pid) != network.Connected {
+		n.log.Warn().Str("peer", pid.String()).Msg("Connection was closed before handshake completed")
+		return
+	}
+
+	md, err := n.reqResp.MetaData(ctx, pid)
+	if err != nil {
+		n.log.Warn().Str("peer", pid.String()).Err(err).Msg("Failed requesting metadata")
+		return
+	}
+
+	n.sendMetadataEvent(ctx, pid, addrInfo, md)
+	n.addToMetadataCache(pid, md)
+
+	n.log.Info().
+		Str("peer", pid.String()).
+		Int("Seq", int(md.SeqNumber)).
+		Str("Attnets", hex.EncodeToString(md.Attnets)).
+		Msg("Performed successful handshake")
+
+	fmt.Fprintf(n.fileLogger, "%s ID: %v, SeqNum: %v, Attnets: %s\n",
+		time.Now().Format(time.RFC3339), pid.String(), md.SeqNumber, hex.EncodeToString(md.Attnets))
 }
 
 func (n *Node) validatePeer(ctx context.Context, pid peer.ID, addrInfo peer.AddrInfo) error {
@@ -155,8 +181,8 @@ func (n *Node) validatePeer(ctx context.Context, pid peer.ID, addrInfo peer.Addr
 		Str("Attnets", hex.EncodeToString(md.Attnets)).
 		Msg("Performed successful handshake")
 
-	fmt.Fprintf(n.fileLogger, "%s ID: %v, SeqNum: %v, Attnets: %s, ForkDigest: %s\n",
-		time.Now().Format(time.RFC3339), pid.String(), md.SeqNumber, hex.EncodeToString(md.Attnets), hex.EncodeToString(st.ForkDigest))
+	fmt.Fprintf(n.fileLogger, "%s ID: %v, SeqNum: %v, Attnets: %s\n",
+		time.Now().Format(time.RFC3339), pid.String(), md.SeqNumber, hex.EncodeToString(md.Attnets))
 
 	return nil
 }
