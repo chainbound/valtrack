@@ -86,10 +86,6 @@ func (n *Node) handleOutboundConnection(pid peer.ID) {
 func (n *Node) handleInboundConnection(pid peer.ID) {
 	n.log.Info().Str("peer", pid.String()).Msg("Handling new inbound connection")
 
-	// NOTE: This timeout will be used for all the operations in this function
-	ctx, cancel := context.WithTimeout(context.Background(), n.cfg.DialTimeout)
-	defer cancel()
-
 	// Cleanup function
 	defer func() {
 		if n.host.Network().Connectedness(pid) != network.Connected {
@@ -110,6 +106,10 @@ func (n *Node) handleInboundConnection(pid peer.ID) {
 	// Sleep 5 seconds to allow the handshake to complete
 	// TODO: this should be handled in the shared peerstore, i.e. saving the status message
 	time.Sleep(5 * time.Second)
+
+	ctx, cancel := context.WithTimeout(context.Background(), n.cfg.DialTimeout)
+	defer cancel()
+
 	if n.host.Network().Connectedness(pid) != network.Connected {
 		n.log.Warn().Str("peer", pid.String()).Msg("Connection was closed before handshake completed")
 		return
