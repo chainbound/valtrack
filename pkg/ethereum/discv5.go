@@ -13,6 +13,7 @@ import (
 	"github.com/chainbound/valtrack/config"
 	"github.com/chainbound/valtrack/log"
 	"github.com/libp2p/go-libp2p/core/peer"
+	"github.com/prysmaticlabs/go-bitfield"
 	"github.com/rs/zerolog"
 
 	glog "github.com/ethereum/go-ethereum/log"
@@ -100,6 +101,11 @@ func NewDiscoveryV5(pk *ecdsa.PrivateKey, discConfig *config.DiscConfig) (*Disco
 	tcpEntry := enr.TCP(discConfig.TCP)
 	ethNode.Set(tcpEntry)
 
+	ethNode.Set(attnetsEntry())
+
+	eth2, _ := discConfig.Eth2EnrEntry()
+	ethNode.Set(eth2)
+
 	if len(discConfig.Bootnodes) == 0 {
 		return nil, errors.New("No bootnodes provided")
 	}
@@ -143,7 +149,7 @@ func NewDiscoveryV5(pk *ecdsa.PrivateKey, discConfig *config.DiscConfig) (*Disco
 
 	return &DiscoveryV5{
 		Dv5Listener:   listener,
-		FilterDigest:  discConfig.ForkDigest,
+		FilterDigest:  "0x" + hex.EncodeToString(discConfig.ForkDigest[:]),
 		log:           log,
 		seenNodes:     make(map[peer.ID]NodeInfo),
 		fileLogger:    file,
@@ -300,4 +306,13 @@ func NewHostInfo(peerID peer.ID, opts ...RemoteHostOptions) *HostInfo {
 	}
 
 	return hInfo
+}
+
+// attnetsEntry returns the fully-subscribed attnets entry for the ENR
+func attnetsEntry() enr.Entry {
+	bitV := bitfield.NewBitvector64()
+	for i := uint64(0); i < bitV.Len(); i++ {
+		bitV.SetBitAt(i, true)
+	}
+	return enr.WithEntry("attnets", bitV.Bytes())
 }

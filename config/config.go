@@ -1,12 +1,15 @@
 package config
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/ethereum/go-ethereum/p2p/enode"
+	"github.com/ethereum/go-ethereum/p2p/enr"
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/prysmaticlabs/prysm/v5/beacon-chain/p2p/encoder"
 	"github.com/prysmaticlabs/prysm/v5/config/params"
+	pb "github.com/prysmaticlabs/prysm/v5/proto/prysm/v1alpha1"
 )
 
 // Bootnodes
@@ -49,7 +52,7 @@ type DiscConfig struct {
 	UDP        int
 	TCP        int
 	DBPath     string
-	ForkDigest string
+	ForkDigest [4]byte
 	LogPath    string
 	Bootnodes  []*enode.Node
 }
@@ -59,9 +62,32 @@ var DefaultDiscConfig DiscConfig = DiscConfig{
 	UDP:        9000,
 	TCP:        9000,
 	DBPath:     "",
-	ForkDigest: "0x6a95a1a9",
+	ForkDigest: [4]byte{0x6a, 0x95, 0xa1, 0xa9},
 	LogPath:    "nodes.log",
 	Bootnodes:  GetEthereumBootnodes(),
+}
+
+func (d *DiscConfig) Eth2EnrEntry() (enr.Entry, error) {
+	// currentSlot := slots.Since(genesisTime)
+	// currentEpoch := slots.ToEpoch(currentSlot)
+
+	// nextForkVersion, nextForkEpoch, err := forks.NextForkData(currentEpoch)
+	// if err != nil {
+	// 	return nil, fmt.Errorf("calculate next fork data: %w", err)
+	// }
+
+	enrForkID := &pb.ENRForkID{
+		CurrentForkDigest: d.ForkDigest[:],
+		// NextForkVersion:   nextForkVersion[:],
+		// NextForkEpoch:     nextForkEpoch,
+	}
+
+	enc, err := enrForkID.MarshalSSZ()
+	if err != nil {
+		return nil, fmt.Errorf("marshal enr fork id: %w", err)
+	}
+
+	return enr.WithEntry("eth2", enc), nil
 }
 
 // NodeConfig holds additional configuration options for the node.
