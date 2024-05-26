@@ -326,6 +326,7 @@ func (n *Node) removeFromBackoffCache(pid peer.ID) {
 // }
 
 func (n *Node) addToMetadataCache(pid peer.ID, metadata *eth.MetaDataV1) {
+	// TODO: we seeem to run into a deadlock here. Ignore for now.
 	// n.removeFromBackoffCache(pid)
 
 	// NOTE: Peer ID will be unique, so no need to lock the cache
