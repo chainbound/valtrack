@@ -16,6 +16,7 @@ type PeerDiscoveredEvent struct {
 	Port       int    `json:"port"`
 	CrawlerID  string `json:"crawler_id"`
 	CrawlerLoc string `json:"crawler_location"`
+	Timestamp  int64  `json:"timestamp"`
 }
 
 type MetadataReceivedEvent struct {
@@ -26,6 +27,7 @@ type MetadataReceivedEvent struct {
 	ClientVersion string          `json:"client_version"`
 	CrawlerID     string          `json:"crawler_id"`
 	CrawlerLoc    string          `json:"crawler_location"`
+	Timestamp     int64           `json:"timestamp"` // Timestamp in UNIX milliseconds
 }
 
 func (n *Node) sendMetadataEvent(ctx context.Context, event *MetadataReceivedEvent) {
@@ -72,6 +74,7 @@ func (d *DiscoveryV5) sendPeerEvent(ctx context.Context, node *enode.Node, hInfo
 		Port:       hInfo.Port,
 		CrawlerID:  getCrawlerMachineID(),
 		CrawlerLoc: getCrawlerLocation(),
+		Timestamp:  time.Now().UnixMilli(),
 	}
 
 	select {

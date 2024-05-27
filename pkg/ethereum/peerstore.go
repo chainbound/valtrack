@@ -50,6 +50,7 @@ func (p *PeerInfo) IntoMetadataEvent() *MetadataReceivedEvent {
 		// These should be set later
 		CrawlerID:  "",
 		CrawlerLoc: "",
+		Timestamp:  p.lastSeen.UnixMilli(),
 	}
 }
 
@@ -194,7 +195,6 @@ func (p *Peerstore) SetClientVersion(id peer.ID, version string) {
 
 	if info, ok := p.peers[id]; ok {
 		info.clientVersion = version
-		info.lastSeen = time.Now()
 	} else {
 		panic("peerstore: SetClientVersion: peer not found")
 	}
