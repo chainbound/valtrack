@@ -59,7 +59,7 @@ type DiscConfig struct {
 }
 
 var DefaultDiscConfig DiscConfig = DiscConfig{
-	IP:         "::",
+	IP:         "0.0.0.0",
 	UDP:        9000,
 	TCP:        9000,
 	DBPath:     "",
@@ -72,7 +72,7 @@ func (d *DiscConfig) Eth2EnrEntry() (enr.Entry, error) {
 	// currentSlot := slots.Since(genesisTime)
 	// currentEpoch := slots.ToEpoch(currentSlot)
 
-	// TODO: not hardcoded
+	// TODO: not hardcoded, use timestamp to calculate
 	nextForkVersion, nextForkEpoch, err := forks.NextForkData(286168)
 	if err != nil {
 		return nil, fmt.Errorf("calculate next fork data: %w", err)
@@ -111,6 +111,6 @@ var DefaultNodeConfig NodeConfig = NodeConfig{
 	Encoder:           encoder.SszNetworkEncoder{},
 	DialTimeout:       10 * time.Second,
 	ConcurrentDialers: 64,
-	IP:                "::",
+	IP:                "0.0.0.0",
 	Port:              9000,
 }

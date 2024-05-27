@@ -7,10 +7,10 @@ app = 'valtrack'
 primary_region = 'ams'
 
 [build]
-  dockerfile = "Dockerfile.valtrack"
+dockerfile = "Dockerfile.valtrack"
 
 [env]
-  NATS_URL = "nats://nats-jetstream-app.fly.dev:4222"
+NATS_URL = "nats://nats-jetstream-app.fly.dev:4222"
 
 [[services]]
 # Libp2p port (needs to run on IPv6)
