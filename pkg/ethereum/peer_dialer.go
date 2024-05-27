@@ -41,7 +41,7 @@ func (p *PeerDialer) Serve(ctx context.Context) error {
 			// The success case is handled in net_notifiee.go.
 			timeoutCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 			if err := p.host.Connect(timeoutCtx, addrInfo); err != nil {
-				p.log.Error().Err(err).Str("peer", addrInfo.ID.String()).Msg("Failed to connect to peer")
+				p.log.Debug().Err(err).Str("peer", addrInfo.ID.String()).Msg("Failed to connect to peer")
 			}
 
 			cancel()
