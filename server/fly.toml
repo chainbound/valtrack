@@ -1,0 +1,34 @@
+# fly.toml app configuration file generated for nats-jetstream-app on 2024-05-24T13:36:45+05:30
+#
+# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
+#
+
+app = 'nats-jetstream-app'
+primary_region = 'sin'
+
+[build]
+  # image = 'nats:latest'
+  dockerfile = "Dockerfile.server"
+
+[[services]]
+  protocol = 'tcp'
+  internal_port = 4222
+
+  [[services.ports]]
+    port = 4222
+
+  [[services.tcp_checks]]
+    interval = '15s'
+    timeout = '2s'
+    grace_period = '1s'
+
+[[vm]]
+  memory = '2gb'
+  cpu_kind = 'shared'
+  cpus = 2
+
+[mounts]
+  source = "natsjs_server"
+  destination = "/data"
+  # processes = ["disk"] # optional - attach volumes to Machines that belong to one or more process groups
+  initial_size = "10gb"
