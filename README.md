@@ -1,6 +1,4 @@
-# Relay Bids Retrieval
-
-Valtrack is a tool that
+# Valtrack
 
 ## Getting Started
 
