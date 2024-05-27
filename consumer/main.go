@@ -14,7 +14,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
-	eth "github.com/prysmaticlabs/prysm/v5/proto/prysm/v1alpha1"
 	"github.com/rs/zerolog"
 	"github.com/xitongsys/parquet-go-source/local"
 	"github.com/xitongsys/parquet-go/writer"
@@ -38,14 +37,20 @@ type ParquetPeerDiscoveredEvent struct {
 }
 
 type ParquetMetadataReceivedEvent struct {
-	ID            string          `parquet:"name=id, type=BYTE_ARRAY, convertedtype=UTF8"`
-	Multiaddr     string          `parquet:"name=multiaddr, type=BYTE_ARRAY, convertedtype=UTF8"`
-	Epoch         int             `parquet:"name=epoch, type=INT32"`
-	MetaData      *eth.MetaDataV1 `parquet:"name=metadata, type=BYTE_ARRAY, convertedtype=UTF8"` // Assuming eth.MetaDataV1 can be serialized to JSON string
-	ClientVersion string          `parquet:"name=client_version, type=BYTE_ARRAY, convertedtype=UTF8"`
-	CrawlerID     string          `parquet:"name=crawler_id, type=BYTE_ARRAY, convertedtype=UTF8"`
-	CrawlerLoc    string          `parquet:"name=crawler_location, type=BYTE_ARRAY, convertedtype=UTF8"`
-	Timestamp     int64           `parquet:"name=timestamp, type=INT64"`
+	ID        string `parquet:"name=id, type=BYTE_ARRAY, convertedtype=UTF8"`
+	Multiaddr string `parquet:"name=multiaddr, type=BYTE_ARRAY, convertedtype=UTF8"`
+	Epoch     int    `parquet:"name=epoch, type=INT32"`
+	// MetaData      SimpleMetaData `parquet:"name=metadata, type=BYTE_ARRAY, convertedtype=UTF8"`
+	ClientVersion string `parquet:"name=client_version, type=BYTE_ARRAY, convertedtype=UTF8"`
+	CrawlerID     string `parquet:"name=crawler_id, type=BYTE_ARRAY, convertedtype=UTF8"`
+	CrawlerLoc    string `parquet:"name=crawler_location, type=BYTE_ARRAY, convertedtype=UTF8"`
+	Timestamp     int64  `parquet:"name=timestamp, type=INT64"`
+}
+
+type SimpleMetaData struct {
+	SeqNumber uint64
+	Attnets   string
+	Syncnets  []byte
 }
 
 func main() {
@@ -69,22 +74,19 @@ func main() {
 
 	w_peer, err := local.NewLocalFileWriter("peer_discovered.parquet")
 	if err != nil {
-		fmt.Printf("Error creating peer_discovered parquet file: %v\n", err)
-		return
+		log.Fatal().Err(err).Msg("Error creating peer_discovered parquet file")
 	}
 	defer w_peer.Close()
 
 	w_metadata, err := local.NewLocalFileWriter("metadata_received.parquet")
 	if err != nil {
-		fmt.Printf("Error creating metadata_received parquet file: %v\n", err)
-		return
+		log.Fatal().Err(err).Msg("Error creating metadata_received parquet file")
 	}
 	defer w_metadata.Close()
 
 	metadataReceivedWriter, err := writer.NewParquetWriter(w_metadata, new(ParquetMetadataReceivedEvent), 4)
 	if err != nil {
-		fmt.Printf("Error creating Metadata Parquet writer: %v\n", err)
-		return
+		log.Fatal().Err(err).Msg("Error creating Metadata Parquet writer")
 	}
 	defer func() {
 		if err := metadataReceivedWriter.WriteStop(); err != nil {
@@ -96,8 +98,7 @@ func main() {
 
 	peerDiscoveredWriter, err := writer.NewParquetWriter(w_peer, new(ParquetPeerDiscoveredEvent), 4)
 	if err != nil {
-		fmt.Printf("Error creating Peer discovered Parquet writer: %v\n", err)
-		return
+		log.Fatal().Err(err).Msg("Error creating Peer discovered Parquet writer")
 	}
 	defer func() {
 		if err := peerDiscoveredWriter.WriteStop(); err != nil {
@@ -200,11 +201,17 @@ func storePeerDiscoveredEvent(pw *writer.ParquetWriter, event ethereum.PeerDisco
 }
 
 func storeMetadataReceivedEvent(pw *writer.ParquetWriter, event ethereum.MetadataReceivedEvent, log zerolog.Logger) {
+	// simpleMetaData := SimpleMetaData{
+	// 	SeqNumber: event.MetaData.SeqNumber,
+	// 	Attnets:   hex.EncodeToString(event.MetaData.Attnets),
+	// 	Syncnets:  event.MetaData.Syncnets,
+	// }
+
 	parquetEvent := ParquetMetadataReceivedEvent{
-		ID:            event.ID,
-		Multiaddr:     event.Multiaddr,
-		Epoch:         int(event.Epoch),
-		MetaData:      event.MetaData,
+		ID:        event.ID,
+		Multiaddr: event.Multiaddr,
+		Epoch:     int(event.Epoch),
+		// MetaData:      simpleMetaData,
 		ClientVersion: event.ClientVersion,
 		CrawlerID:     event.CrawlerID,
 		CrawlerLoc:    event.CrawlerLoc,
