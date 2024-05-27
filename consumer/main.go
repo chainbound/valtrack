@@ -11,6 +11,7 @@ import (
 
 	"github.com/chainbound/valtrack/log"
 	"github.com/chainbound/valtrack/pkg/ethereum"
+	"github.com/google/uuid"
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
 	"github.com/rs/zerolog"
@@ -50,10 +51,12 @@ func main() {
 func eventSourcingConsumer(js jetstream.JetStream, log zerolog.Logger) (jetstream.ConsumeContext, error) {
 	ctx := context.Background()
 
+	uniqueID := uuid.New().String()
+
 	// Set up a consumer
 	consumerCfg := jetstream.ConsumerConfig{
-		Name:        "event-consumer",
-		Durable:     "event-consumer",
+		Name:        fmt.Sprintf("consumer-%s", uniqueID),
+		Durable:     fmt.Sprintf("consumer-%s", uniqueID),
 		Description: "Consumes valtrack events",
 		AckPolicy:   jetstream.AckExplicitPolicy,
 	}
