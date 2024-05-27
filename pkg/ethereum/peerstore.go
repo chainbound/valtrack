@@ -26,15 +26,31 @@ const EPOCH_DURATION = 12 * 32 * time.Second
 
 // PeerInfo contains information about a peer
 type PeerInfo struct {
-	LastSeen   time.Time
+	id         peer.ID
+	lastSeen   time.Time
 	remoteAddr multiaddr.Multiaddr
 
-	status   *eth.Status
-	metadata *eth.MetaDataV1 // Only interested in metadataV1
+	status        *eth.Status
+	metadata      *eth.MetaDataV1 // Only interested in metadataV1
+	clientVersion string
 
 	state          ConnectionState
 	lastErr        error
 	backoffCounter uint32
+}
+
+func (p *PeerInfo) IntoMetadataEvent() *MetadataReceivedEvent {
+	return &MetadataReceivedEvent{
+		ID:            p.id.String(),
+		Multiaddr:     p.remoteAddr.String(),
+		ClientVersion: p.clientVersion,
+		MetaData:      p.metadata,
+		// `epoch = slot // SLOTS_PER_EPOCH`
+		Epoch: uint(p.status.HeadSlot) / 32,
+		// These should be set later
+		CrawlerID:  "",
+		CrawlerLoc: "",
+	}
 }
 
 type Peerstore struct {
@@ -65,8 +81,9 @@ func (p *Peerstore) Insert(id peer.ID, addr multiaddr.Multiaddr) {
 	defer p.Unlock()
 
 	p.peers[id] = &PeerInfo{
+		id:         id,
 		remoteAddr: addr,
-		LastSeen:   time.Now(),
+		lastSeen:   time.Now(),
 	}
 }
 
@@ -76,10 +93,21 @@ func (p *Peerstore) SetState(id peer.ID, state ConnectionState) {
 
 	if info, ok := p.peers[id]; ok {
 		info.state = state
-		info.LastSeen = time.Now()
+		info.lastSeen = time.Now()
 	} else {
 		panic("peerstore: SetState: peer not found")
 	}
+}
+
+func (p *Peerstore) State(id peer.ID) ConnectionState {
+	p.RLock()
+	defer p.RUnlock()
+
+	if p.peers[id] == nil {
+		return NotConnected
+	}
+
+	return p.peers[id].state
 }
 
 // SetBackoff marks the peer as backed off, increments the backoff counter
@@ -91,7 +119,7 @@ func (p *Peerstore) SetBackoff(id peer.ID, err error) uint32 {
 	if info, ok := p.peers[id]; ok {
 		info.lastErr = err
 		info.backoffCounter++
-		info.LastSeen = time.Now()
+		info.lastSeen = time.Now()
 
 		return info.backoffCounter
 	} else {
@@ -104,7 +132,7 @@ func (p *Peerstore) IsBackedOff(id peer.ID) bool {
 	defer p.RUnlock()
 
 	if info, ok := p.peers[id]; ok {
-		return info.backoffCounter > 0 && time.Since(info.LastSeen) < p.defaultBackoff
+		return info.backoffCounter > 0 && time.Since(info.lastSeen) < p.defaultBackoff
 	}
 
 	return false
@@ -117,7 +145,7 @@ func (p *Peerstore) SetConnected(id peer.ID) {
 
 	if info, ok := p.peers[id]; ok {
 		info.backoffCounter = 0
-		info.LastSeen = time.Now()
+		info.lastSeen = time.Now()
 		info.lastErr = nil
 	} else {
 		panic("peerstore: ResetBackoff: peer not found")
@@ -131,7 +159,7 @@ func (p *Peerstore) SetStatus(id peer.ID, status *eth.Status) {
 
 	if info, ok := p.peers[id]; ok {
 		info.status = status
-		info.LastSeen = time.Now()
+		info.lastSeen = time.Now()
 	} else {
 		panic("peerstore: SetStatus: peer not found")
 	}
@@ -154,21 +182,22 @@ func (p *Peerstore) SetMetadata(id peer.ID, metadata *eth.MetaDataV1) {
 
 	if info, ok := p.peers[id]; ok {
 		info.metadata = metadata
-		info.LastSeen = time.Now()
+		info.lastSeen = time.Now()
 	} else {
 		panic("peerstore: SetMetadata: peer not found")
 	}
 }
 
-func (p *Peerstore) State(id peer.ID) ConnectionState {
-	p.RLock()
-	defer p.RUnlock()
+func (p *Peerstore) SetClientVersion(id peer.ID, version string) {
+	p.Lock()
+	defer p.Unlock()
 
-	if p.peers[id] == nil {
-		return NotConnected
+	if info, ok := p.peers[id]; ok {
+		info.clientVersion = version
+		info.lastSeen = time.Now()
+	} else {
+		panic("peerstore: SetClientVersion: peer not found")
 	}
-
-	return p.peers[id].state
 }
 
 func (p *Peerstore) LastErr(id peer.ID) error {
@@ -201,12 +230,12 @@ func (p *Peerstore) PeersToReconnect() []peer.AddrInfo {
 	for id, info := range p.peers {
 		if info.state == NotConnected {
 			// If the backoff expired, reconnect
-			if info.backoffCounter > 0 && time.Since(info.LastSeen) > p.defaultBackoff*(time.Second*time.Duration(info.backoffCounter)) {
+			if info.backoffCounter > 0 && time.Since(info.lastSeen) > p.defaultBackoff*(time.Second*time.Duration(info.backoffCounter)) {
 				peers = append(peers, peer.AddrInfo{ID: id, Addrs: []multiaddr.Multiaddr{info.remoteAddr}})
 			}
 
 			// If the last error was nil and we haven't seen the peer for an epoch, reconnect
-			if info.lastErr == nil && time.Since(info.LastSeen) > EPOCH_DURATION {
+			if info.lastErr == nil && time.Since(info.lastSeen) > EPOCH_DURATION {
 				peers = append(peers, peer.AddrInfo{ID: id, Addrs: []multiaddr.Multiaddr{info.remoteAddr}})
 			}
 

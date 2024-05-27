@@ -3,7 +3,7 @@ package ethereum
 import (
 	"bytes"
 	"context"
-	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -81,7 +81,7 @@ func (n *Node) handleOutboundConnection(pid peer.ID) {
 	}
 
 	addrInfo := peer.AddrInfo{ID: pid, Addrs: addrs}
-	if err := n.validatePeer(ctx, pid, addrInfo); err != nil {
+	if err := n.handshake(ctx, pid, addrInfo); err != nil {
 		n.log.Warn().Str("peer", pid.String()).Err(err).Msg("Handshake failed")
 
 		// If there was any issue during the handshake, we didn't get to the metadata response.
@@ -90,6 +90,22 @@ func (n *Node) handleOutboundConnection(pid peer.ID) {
 
 		return
 	}
+
+	// Save the client version
+	if v, err := n.host.Peerstore().Get(pid, "AgentVersion"); err == nil {
+		n.peerstore.SetClientVersion(pid, v.(string))
+	}
+
+	info := n.peerstore.Get(pid)
+	event := info.IntoMetadataEvent()
+
+	n.sendMetadataEvent(ctx, event)
+
+	json, _ := json.Marshal(event)
+
+	n.log.Info().Msgf("Succesful handshake: %s", string(json))
+
+	fmt.Fprintln(n.fileLogger, string(json))
 
 }
 
@@ -141,25 +157,21 @@ func (n *Node) handleInboundConnection(pid peer.ID) {
 
 	n.peerstore.SetMetadata(pid, md)
 
-	addrs := n.host.Peerstore().Addrs(pid)
-	if len(addrs) == 0 {
-		n.log.Error().Str("peer", pid.String()).Msg("No addresses found on inbound peer")
-		return
+	// Save the client version
+	if v, err := n.host.Peerstore().Get(pid, "AgentVersion"); err == nil {
+		n.peerstore.SetClientVersion(pid, v.(string))
 	}
 
-	addrInfo := peer.AddrInfo{ID: pid, Addrs: addrs}
+	info := n.peerstore.Get(pid)
+	event := info.IntoMetadataEvent()
 
-	// TODO: get this info from the peerstore
-	n.sendMetadataEvent(ctx, pid, addrInfo, md)
+	n.sendMetadataEvent(ctx, event)
 
-	n.log.Info().
-		Str("peer", pid.String()).
-		Int("Seq", int(md.SeqNumber)).
-		Str("Attnets", hex.EncodeToString(md.Attnets)).
-		Msg("Performed successful handshake")
+	json, _ := json.Marshal(event)
 
-	fmt.Fprintf(n.fileLogger, "%s ID: %v, SeqNum: %v, Attnets: %s\n",
-		time.Now().Format(time.RFC3339), pid.String(), md.SeqNumber, hex.EncodeToString(md.Attnets))
+	n.log.Info().Msgf("Succesful handshake: %s", string(json))
+
+	fmt.Fprintln(n.fileLogger, string(json))
 }
 
 func (n *Node) waitForStatus(ctx context.Context, pid peer.ID) error {
@@ -177,7 +189,7 @@ func (n *Node) waitForStatus(ctx context.Context, pid peer.ID) error {
 	}
 }
 
-func (n *Node) validatePeer(ctx context.Context, pid peer.ID, addrInfo peer.AddrInfo) error {
+func (n *Node) handshake(ctx context.Context, pid peer.ID, addrInfo peer.AddrInfo) error {
 	st, err := n.reqResp.Status(ctx, pid)
 	if err != nil {
 		return errors.Wrap(err, "Failed to get status from peer")
@@ -204,17 +216,6 @@ func (n *Node) validatePeer(ctx context.Context, pid peer.ID, addrInfo peer.Addr
 
 	// Store the metadata for this peer
 	n.peerstore.SetMetadata(pid, md)
-
-	n.sendMetadataEvent(ctx, pid, addrInfo, md)
-
-	n.log.Info().
-		Str("peer", pid.String()).
-		Int("Seq", int(md.SeqNumber)).
-		Str("Attnets", hex.EncodeToString(md.Attnets)).
-		Msg("Performed successful handshake")
-
-	fmt.Fprintf(n.fileLogger, "%s ID: %v, SeqNum: %v, Attnets: %s\n",
-		time.Now().Format(time.RFC3339), pid.String(), md.SeqNumber, hex.EncodeToString(md.Attnets))
 
 	return nil
 }

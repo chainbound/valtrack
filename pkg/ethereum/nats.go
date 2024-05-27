@@ -2,14 +2,10 @@ package ethereum
 
 import (
 	"context"
-	"encoding/hex"
 	"encoding/json"
-	"strconv"
-	"strings"
 	"time"
 
 	"github.com/ethereum/go-ethereum/p2p/enode"
-	"github.com/libp2p/go-libp2p/core/peer"
 	eth "github.com/prysmaticlabs/prysm/v5/proto/prysm/v1alpha1"
 )
 
@@ -23,44 +19,22 @@ type PeerDiscoveredEvent struct {
 }
 
 type MetadataReceivedEvent struct {
-	ENR        string         `json:"enr"`
-	ID         string         `json:"id"`
-	IP         string         `json:"ip"`
-	Port       int            `json:"port"`
-	MetaData   SimpleMetaData `json:"metadata"`
-	CrawlerID  string         `json:"crawler_id"`
-	CrawlerLoc string         `json:"crawler_location"`
+	ID            string          `json:"id"`
+	Multiaddr     string          `json:"multiaddr"`
+	Epoch         uint            `json:"epoch"`
+	MetaData      *eth.MetaDataV1 `json:"metadata"`
+	ClientVersion string          `json:"client_version"`
+	CrawlerID     string          `json:"crawler_id"`
+	CrawlerLoc    string          `json:"crawler_location"`
 }
 
-type SimpleMetaData struct {
-	SeqNumber uint64
-	Attnets   string
-	Syncnets  []byte
-}
-
-func (n *Node) sendMetadataEvent(ctx context.Context, pid peer.ID, addrInfo peer.AddrInfo, md *eth.MetaDataV1) {
-	addressParts := strings.Split(addrInfo.Addrs[0].String(), "/")
-	ip := addressParts[2]
-	port, err := strconv.Atoi(addressParts[4])
-	if err != nil {
-		n.log.Error().Err(err).Msg("Failed to convert port to int")
-		return
-	}
-	node := n.disc.seenNodes[pid].Node
-
-	metadataEvent := &MetadataReceivedEvent{
-		ENR:        node.String(),
-		ID:         pid.String(),
-		IP:         ip,
-		Port:       port,
-		MetaData:   SimpleMetaData{SeqNumber: md.SeqNumber, Attnets: hex.EncodeToString(md.Attnets), Syncnets: md.Syncnets},
-		CrawlerID:  getCrawlerMachineID(),
-		CrawlerLoc: getCrawlerLocation(),
-	}
+func (n *Node) sendMetadataEvent(ctx context.Context, event *MetadataReceivedEvent) {
+	event.CrawlerID = getCrawlerMachineID()
+	event.CrawlerLoc = getCrawlerLocation()
 
 	select {
-	case n.metadataEventChan <- metadataEvent:
-		n.log.Debug().Str("peer", pid.String()).Msg("Sent metadata_received event to channel")
+	case n.metadataEventChan <- event:
+		n.log.Trace().Str("peer", event.ID).Msg("Sent metadata_received event to channel")
 	case <-ctx.Done():
 		n.log.Warn().Msg("Context cancelled before sending metadata_received event to channel")
 	}
