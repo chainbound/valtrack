@@ -11,9 +11,12 @@ import (
 
 	"github.com/chainbound/valtrack/log"
 	"github.com/chainbound/valtrack/pkg/ethereum"
+	"github.com/ethereum/go-ethereum/p2p/enode"
 	"github.com/google/uuid"
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
+	"github.com/prysmaticlabs/prysm/v5/beacon-chain/p2p"
+	"github.com/prysmaticlabs/prysm/v5/consensus-types/primitives"
 	"github.com/rs/zerolog"
 	"github.com/xitongsys/parquet-go-source/local"
 	"github.com/xitongsys/parquet-go/writer"
@@ -23,6 +26,7 @@ type Consumer struct {
 	log                    zerolog.Logger
 	peerDiscoveredWriter   *writer.ParquetWriter
 	metadataReceivedWriter *writer.ParquetWriter
+	validatorWriter        *writer.ParquetWriter
 	js                     jetstream.JetStream
 }
 
@@ -47,10 +51,22 @@ type ParquetMetadataReceivedEvent struct {
 	Timestamp     int64  `parquet:"name=timestamp, type=INT64"`
 }
 
+type ParquetValidatorEvent struct {
+	ID        string `parquet:"name=id, type=BYTE_ARRAY, convertedtype=UTF8"`
+	Multiaddr string `parquet:"name=multiaddr, type=BYTE_ARRAY, convertedtype=UTF8"`
+	Epoch     int    `parquet:"name=epoch, type=INT32"`
+	// MetaData      SimpleMetaData `parquet:"name=metadata, type=BYTE_ARRAY, convertedtype=UTF8"`
+	ClientVersion string  `parquet:"name=client_version, type=BYTE_ARRAY, convertedtype=UTF8"`
+	CrawlerID     string  `parquet:"name=crawler_id, type=BYTE_ARRAY, convertedtype=UTF8"`
+	CrawlerLoc    string  `parquet:"name=crawler_location, type=BYTE_ARRAY, convertedtype=UTF8"`
+	Timestamp     int64   `parquet:"name=timestamp, type=INT64"`
+	Subnets       []int64 `parquet:"name=subnets type=INT64"`
+}
+
 type SimpleMetaData struct {
 	SeqNumber uint64
 	Attnets   string
-	Syncnets  []byte
+	Syncnets  string
 }
 
 func main() {
@@ -84,6 +100,11 @@ func main() {
 	}
 	defer w_metadata.Close()
 
+	w_validator, err := local.NewLocalFileWriter("validator.parquet")
+	if err != nil {
+		log.Fatal().Err(err).Msg("Error creating validator parquet file")
+	}
+
 	metadataReceivedWriter, err := writer.NewParquetWriter(w_metadata, new(ParquetMetadataReceivedEvent), 4)
 	if err != nil {
 		log.Fatal().Err(err).Msg("Error creating Metadata Parquet writer")
@@ -108,10 +129,23 @@ func main() {
 		}
 	}()
 
+	validatorWriter, err := writer.NewParquetWriter(w_validator, new(ParquetMetadataReceivedEvent), 4)
+	if err != nil {
+		log.Fatal().Err(err).Msg("Error creating Validator Parquet writer")
+	}
+	defer func() {
+		if err := validatorWriter.WriteStop(); err != nil {
+			fmt.Printf("Error stopping Validator Parquet writer: %v\n", err)
+		} else {
+			fmt.Println("Stopped Validator Parquet writer")
+		}
+	}()
+
 	consumer := Consumer{
 		log:                    log,
 		peerDiscoveredWriter:   peerDiscoveredWriter,
 		metadataReceivedWriter: metadataReceivedWriter,
+		validatorWriter:        validatorWriter,
 		js:                     js,
 	}
 
@@ -146,7 +180,7 @@ func eventSourcingConsumer(cons Consumer) (jetstream.ConsumeContext, error) {
 	}
 
 	return consumer.Consume(func(msg jetstream.Msg) {
-		go handleMessage(cons, msg)
+		handleMessage(cons, msg)
 	})
 }
 
@@ -160,7 +194,7 @@ func handleMessage(cons Consumer, msg jetstream.Msg) {
 			msg.Term()
 			return
 		}
-		cons.log.Info().Any("Seq", MsgMetadata.Sequence).Any("event", event).Msg("peer_discovered")
+		cons.log.Info().Any("seq", MsgMetadata.Sequence).Any("event", event).Msg("peer_discovered")
 		storePeerDiscoveredEvent(cons.peerDiscoveredWriter, event, cons.log)
 
 	case "events.metadata_received":
@@ -170,7 +204,8 @@ func handleMessage(cons Consumer, msg jetstream.Msg) {
 			msg.Term()
 			return
 		}
-		cons.log.Info().Any("Seq", MsgMetadata.Sequence).Any("event", event).Msg("metadata_received")
+		cons.log.Info().Any("seq", MsgMetadata.Sequence).Any("event", event).Msg("metadata_received")
+		storeValidatorEvent(cons.validatorWriter, event, cons.log)
 		storeMetadataReceivedEvent(cons.metadataReceivedWriter, event, cons.log)
 
 	default:
@@ -179,6 +214,35 @@ func handleMessage(cons Consumer, msg jetstream.Msg) {
 
 	if err := msg.Ack(); err != nil {
 		cons.log.Err(err).Msg("Error acknowledging message")
+	}
+}
+
+func storeValidatorEvent(pw *writer.ParquetWriter, event ethereum.MetadataReceivedEvent, log zerolog.Logger) {
+	pid := enode.ID{}
+	copy(pid[:], event.ID)
+	data, err := p2p.ComputeSubscribedSubnets(pid, primitives.Epoch(event.Epoch))
+	subnetData := convertUint64ToInt64(data)
+	if err != nil {
+		log.Err(err).Msg("Error computing subscribed subnets")
+	}
+	log.Info().Any("subnets", data).Msg("subnets")
+
+	parquetEvent := ParquetValidatorEvent{
+		ID:        event.ID,
+		Multiaddr: event.Multiaddr,
+		Epoch:     int(event.Epoch),
+		// MetaData:      simpleMetaData,
+		ClientVersion: event.ClientVersion,
+		CrawlerID:     event.CrawlerID,
+		CrawlerLoc:    event.CrawlerLoc,
+		Timestamp:     event.Timestamp,
+		Subnets:       subnetData,
+	}
+
+	if err := pw.Write(parquetEvent); err != nil {
+		log.Err(err).Msg("Failed to write validator event to Parquet file")
+	} else {
+		log.Trace().Msg("Wrote validator event to Parquet file")
 	}
 }
 
@@ -204,7 +268,7 @@ func storeMetadataReceivedEvent(pw *writer.ParquetWriter, event ethereum.Metadat
 	// simpleMetaData := SimpleMetaData{
 	// 	SeqNumber: event.MetaData.SeqNumber,
 	// 	Attnets:   hex.EncodeToString(event.MetaData.Attnets),
-	// 	Syncnets:  event.MetaData.Syncnets,
+	// 	Syncnets:  hex.EncodeToString(event.MetaData.Syncnets),
 	// }
 
 	parquetEvent := ParquetMetadataReceivedEvent{
@@ -223,4 +287,12 @@ func storeMetadataReceivedEvent(pw *writer.ParquetWriter, event ethereum.Metadat
 	} else {
 		log.Trace().Msg("Wrote metadata_received event to Parquet file")
 	}
+}
+
+func convertUint64ToInt64(uintSlice []uint64) []int64 {
+	intSlice := make([]int64, len(uintSlice))
+	for i, v := range uintSlice {
+		intSlice[i] = int64(v)
+	}
+	return intSlice
 }
