@@ -1,0 +1,33 @@
+# fly.toml app configuration file generated for valtrack on 2024-05-20T17:21:37+05:30
+#
+# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
+#
+
+app = 'valtrack'
+primary_region = 'ams'
+
+[build]
+dockerfile = "Dockerfile.valtrack"
+
+[env]
+NATS_URL = "nats://nats-jetstream-app.fly.dev:4222"
+
+[[services]]
+# Libp2p port (needs to run on IPv6)
+internal_port = 9000
+protocol = "tcp"
+
+[[services.ports]]
+port = "9000"
+
+[[services]]
+internal_port = 9000
+protocol = "udp"
+
+[[services.ports]]
+port = "9000"
+
+[[vm]]
+memory = '1gb'
+cpu_kind = 'shared'
+cpus = 1
