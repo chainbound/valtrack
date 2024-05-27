@@ -69,29 +69,43 @@ func main() {
 
 	w_peer, err := local.NewLocalFileWriter("peer_discovered.parquet")
 	if err != nil {
-		fmt.Printf("Error creating Parquet file: %v\n", err)
+		fmt.Printf("Error creating peer_discovered parquet file: %v\n", err)
 		return
 	}
 	defer w_peer.Close()
 
 	w_metadata, err := local.NewLocalFileWriter("metadata_received.parquet")
 	if err != nil {
-		fmt.Printf("Error creating Parquet file: %v\n", err)
+		fmt.Printf("Error creating metadata_received parquet file: %v\n", err)
 		return
 	}
 	defer w_metadata.Close()
-
-	peerDiscoveredWriter, err := writer.NewParquetWriter(w_peer, new(ParquetPeerDiscoveredEvent), 4)
-	if err != nil {
-		fmt.Printf("Error creating Peer discovered Parquet writer: %v\n", err)
-		return
-	}
 
 	metadataReceivedWriter, err := writer.NewParquetWriter(w_metadata, new(ParquetMetadataReceivedEvent), 4)
 	if err != nil {
 		fmt.Printf("Error creating Metadata Parquet writer: %v\n", err)
 		return
 	}
+	defer func() {
+		if err := metadataReceivedWriter.WriteStop(); err != nil {
+			fmt.Printf("Error stopping Metadata Parquet writer: %v\n", err)
+		} else {
+			fmt.Println("Stopped Metadata Parquet writer")
+		}
+	}()
+
+	peerDiscoveredWriter, err := writer.NewParquetWriter(w_peer, new(ParquetPeerDiscoveredEvent), 4)
+	if err != nil {
+		fmt.Printf("Error creating Peer discovered Parquet writer: %v\n", err)
+		return
+	}
+	defer func() {
+		if err := peerDiscoveredWriter.WriteStop(); err != nil {
+			fmt.Printf("Error stopping Peer discovered Parquet writer: %v\n", err)
+		} else {
+			fmt.Println("Stopped Peer discovered Parquet writer")
+		}
+	}()
 
 	consumer := Consumer{
 		log:                    log,
@@ -141,33 +155,33 @@ func handleMessage(cons Consumer, msg jetstream.Msg) {
 	case "events.peer_discovered":
 		var event ethereum.PeerDiscoveredEvent
 		if err := json.Unmarshal(msg.Data(), &event); err != nil {
-			fmt.Printf("Error unmarshaling PeerDiscoveredEvent: %v\n", err)
+			cons.log.Err(err).Msg("Error unmarshaling PeerDiscoveredEvent")
 			msg.Term()
 			return
 		}
 		cons.log.Info().Any("Seq", MsgMetadata.Sequence).Any("event", event).Msg("peer_discovered")
-		storePeerDiscoveredEvent(cons.peerDiscoveredWriter, event)
+		storePeerDiscoveredEvent(cons.peerDiscoveredWriter, event, cons.log)
 
 	case "events.metadata_received":
 		var event ethereum.MetadataReceivedEvent
 		if err := json.Unmarshal(msg.Data(), &event); err != nil {
-			fmt.Printf("Error unmarshaling MetadataReceivedEvent: %v\n", err)
+			cons.log.Err(err).Msg("Error unmarshaling MetadataReceivedEvent")
 			msg.Term()
 			return
 		}
 		cons.log.Info().Any("Seq", MsgMetadata.Sequence).Any("event", event).Msg("metadata_received")
-		storeMetadataReceivedEvent(cons.metadataReceivedWriter, event)
+		storeMetadataReceivedEvent(cons.metadataReceivedWriter, event, cons.log)
 
 	default:
-		fmt.Printf("Unknown event type: %s\n", msg.Subject())
+		cons.log.Warn().Str("subject", msg.Subject()).Msg("Unknown event type")
 	}
 
 	if err := msg.Ack(); err != nil {
-		fmt.Printf("Error acknowledging message: %v\n", err)
+		cons.log.Err(err).Msg("Error acknowledging message")
 	}
 }
 
-func storePeerDiscoveredEvent(pw *writer.ParquetWriter, event ethereum.PeerDiscoveredEvent) {
+func storePeerDiscoveredEvent(pw *writer.ParquetWriter, event ethereum.PeerDiscoveredEvent, log zerolog.Logger) {
 	parquetEvent := ParquetPeerDiscoveredEvent{
 		ENR:        event.ENR,
 		ID:         event.ID,
@@ -175,24 +189,31 @@ func storePeerDiscoveredEvent(pw *writer.ParquetWriter, event ethereum.PeerDisco
 		Port:       int(event.Port),
 		CrawlerID:  event.CrawlerID,
 		CrawlerLoc: event.CrawlerLoc,
+		Timestamp:  event.Timestamp,
 	}
 
 	if err := pw.Write(parquetEvent); err != nil {
-		fmt.Printf("Error writing to Parquet file: %v\n", err)
+		log.Err(err).Msg("Failed to write peer_discovered event to Parquet file")
+	} else {
+		log.Trace().Msg("Wrote peer_discovered event to Parquet file")
 	}
 }
 
-func storeMetadataReceivedEvent(pw *writer.ParquetWriter, event ethereum.MetadataReceivedEvent) {
+func storeMetadataReceivedEvent(pw *writer.ParquetWriter, event ethereum.MetadataReceivedEvent, log zerolog.Logger) {
 	parquetEvent := ParquetMetadataReceivedEvent{
 		ID:            event.ID,
 		Multiaddr:     event.Multiaddr,
 		Epoch:         uint(event.Epoch),
+		MetaData:      event.MetaData,
 		ClientVersion: event.ClientVersion,
 		CrawlerID:     event.CrawlerID,
 		CrawlerLoc:    event.CrawlerLoc,
+		Timestamp:     event.Timestamp,
 	}
 
 	if err := pw.Write(parquetEvent); err != nil {
-		fmt.Printf("Error writing to Parquet file: %v\n", err)
+		log.Err(err).Msg("Failed to write metadata_received event to Parquet file")
+	} else {
+		log.Trace().Msg("Wrote metadata_received event to Parquet file")
 	}
 }
