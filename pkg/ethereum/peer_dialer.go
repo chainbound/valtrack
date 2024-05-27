@@ -7,7 +7,6 @@ import (
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/rs/zerolog"
-	"github.com/thejerf/suture/v4"
 )
 
 // PeerDialer is a suture service that reads peers from the peerChan (which
@@ -17,50 +16,36 @@ import (
 type PeerDialer struct {
 	host     host.Host
 	peerChan <-chan peer.AddrInfo
-	maxPeers int
 	log      zerolog.Logger
 }
 
-var _ suture.Service = (*PeerDialer)(nil)
-
 func (p *PeerDialer) Serve(ctx context.Context) error {
-	p.log.Debug().Msg("Started Peer Dialer Service")
-	defer p.log.Debug().Msg("Stopped Peer Dialer Service")
+	p.log.Trace().Msg("Started Peer Dialer Service")
+	defer p.log.Warn().Msg("Stopped Peer Dialer Service")
 
 	for {
-		// if we're at capacity, don't look for more peers
-		if len(p.host.Network().Peers()) >= p.maxPeers {
-			select {
-			case <-ctx.Done():
-				return nil
-			case <-time.After(time.Second):
-				// pass
-			}
-			continue
-		}
-
-		var (
-			more     bool
-			addrInfo peer.AddrInfo
-		)
 		select {
 		case <-ctx.Done():
 			return nil
-		case addrInfo, more = <-p.peerChan:
+		case addrInfo, more := <-p.peerChan:
 			if !more {
 				return nil
 			}
+
+			// don't connect with ourselves
+			if addrInfo.ID == p.host.ID() {
+				continue
+			}
+
+			// finally, start the connection establishment.
+			// The success case is handled in net_notifiee.go.
+			timeoutCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+			if err := p.host.Connect(timeoutCtx, addrInfo); err != nil {
+				p.log.Error().Err(err).Str("peer", addrInfo.ID.String()).Msg("Failed to connect to peer")
+			}
+
+			cancel()
 		}
 
-		// don't connect with ourselves
-		if addrInfo.ID == p.host.ID() {
-			continue
-		}
-
-		// finally, start the connection establishment.
-		// The success case is handled in net_notifiee.go.
-		timeoutCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
-		_ = p.host.Connect(timeoutCtx, addrInfo) // ignore error, this happens all the time
-		cancel()
 	}
 }

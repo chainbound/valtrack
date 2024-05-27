@@ -13,12 +13,16 @@ import (
 	"github.com/chainbound/valtrack/config"
 	"github.com/chainbound/valtrack/log"
 	"github.com/libp2p/go-libp2p/core/peer"
+	"github.com/prysmaticlabs/go-bitfield"
 	"github.com/rs/zerolog"
 
 	glog "github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/p2p/discover"
 	"github.com/ethereum/go-ethereum/p2p/enode"
+	"github.com/ethereum/go-ethereum/p2p/enr"
 	ma "github.com/multiformats/go-multiaddr"
+	"github.com/nats-io/nats.go"
+	"github.com/nats-io/nats.go/jetstream"
 	"github.com/pkg/errors"
 )
 
@@ -34,16 +38,49 @@ type HostInfo struct {
 	Attr map[string]interface{}
 }
 
+type NodeInfo struct {
+	Node enode.Node
+	Flag bool
+}
+
 type DiscoveryV5 struct {
-	Dv5Listener  *discover.UDPv5
-	FilterDigest string
-	log          zerolog.Logger
-	seenNodes    map[peer.ID]bool
-	fileLogger   *os.File
-	out          chan peer.AddrInfo
+	Dv5Listener   *discover.UDPv5
+	FilterDigest  string
+	log           zerolog.Logger
+	seenNodes     map[peer.ID]NodeInfo
+	fileLogger    *os.File
+	out           chan peer.AddrInfo
+	js            jetstream.JetStream
+	discEventChan chan *PeerDiscoveredEvent
 }
 
 func NewDiscoveryV5(pk *ecdsa.PrivateKey, discConfig *config.DiscConfig) (*DiscoveryV5, error) {
+	url := os.Getenv("NATS_URL")
+	if url == "" {
+		url = nats.DefaultURL
+	}
+
+	// Init NATS connection
+	nc, err := nats.Connect(url)
+	if err != nil {
+		return nil, errors.Wrap(err, "Failed to connect to NATS")
+	}
+
+	js, _ := jetstream.New(nc)
+
+	cfgjs := jetstream.StreamConfig{
+		Name:      "EVENTS",
+		Retention: jetstream.InterestPolicy,
+		Subjects:  []string{"events.metadata_received", "events.peer_discovered"},
+	}
+
+	ctxJs := context.Background()
+
+	_, err = js.CreateOrUpdateStream(ctxJs, cfgjs)
+	if err != nil {
+		return nil, errors.Wrap(err, "Failed to create JetStream stream")
+	}
+
 	// New geth logger at debug level
 	gethlog := glog.New()
 	log := log.NewLogger("discv5")
@@ -56,6 +93,22 @@ func NewDiscoveryV5(pk *ecdsa.PrivateKey, discConfig *config.DiscConfig) (*Disco
 
 	// Generate a Enode with custom ENR
 	ethNode := enode.NewLocalNode(enodeDB, pk)
+
+	// Set the enr entries
+	udpEntry := enr.UDP(discConfig.UDP)
+	ethNode.Set(udpEntry)
+
+	tcpEntry := enr.TCP(discConfig.TCP)
+	ethNode.Set(tcpEntry)
+
+	ethNode.Set(attnetsEntry())
+
+	eth2, err := discConfig.Eth2EnrEntry()
+	if err != nil {
+		return nil, err
+	}
+
+	ethNode.Set(eth2)
 
 	if len(discConfig.Bootnodes) == 0 {
 		return nil, errors.New("No bootnodes provided")
@@ -70,11 +123,11 @@ func NewDiscoveryV5(pk *ecdsa.PrivateKey, discConfig *config.DiscConfig) (*Disco
 		ValidSchemes: enode.ValidSchemes,
 	}
 
-	udpAddr, err := net.ResolveUDPAddr("udp", net.JoinHostPort(discConfig.IP, string(discConfig.UDP)))
+	udpAddr, err := net.ResolveUDPAddr("udp", net.JoinHostPort(discConfig.IP, fmt.Sprint(discConfig.UDP)))
 
 	_, exists := os.LookupEnv("FLY_APP_NAME")
 	if exists {
-		udpAddr, err = net.ResolveUDPAddr("udp", net.JoinHostPort("fly-global-services", string(discConfig.UDP)))
+		udpAddr, err = net.ResolveUDPAddr("udp", net.JoinHostPort("fly-global-services", fmt.Sprint(discConfig.UDP)))
 	}
 
 	if err != nil {
@@ -91,6 +144,7 @@ func NewDiscoveryV5(pk *ecdsa.PrivateKey, discConfig *config.DiscConfig) (*Disco
 	if err != nil {
 		return nil, errors.Wrap(err, "Failed to start discv5 listener")
 	}
+	log.Info().Str("udp_addr", udpAddr.String()).Msg("Listening on UDP")
 
 	file, err := os.Create(discConfig.LogPath)
 	if err != nil {
@@ -98,12 +152,14 @@ func NewDiscoveryV5(pk *ecdsa.PrivateKey, discConfig *config.DiscConfig) (*Disco
 	}
 
 	return &DiscoveryV5{
-		Dv5Listener:  listener,
-		FilterDigest: discConfig.ForkDigest,
-		log:          log,
-		seenNodes:    make(map[peer.ID]bool),
-		fileLogger:   file,
-		out:          make(chan peer.AddrInfo),
+		Dv5Listener:   listener,
+		FilterDigest:  "0x" + hex.EncodeToString(discConfig.ForkDigest[:]),
+		log:           log,
+		seenNodes:     make(map[peer.ID]NodeInfo),
+		fileLogger:    file,
+		out:           make(chan peer.AddrInfo, 1024),
+		js:            js,
+		discEventChan: make(chan *PeerDiscoveredEvent, 1024),
 	}, nil
 }
 
@@ -112,6 +168,8 @@ func (d *DiscoveryV5) Serve(ctx context.Context) error {
 
 	// Start iterating over randomly discovered nodes
 	iter := d.Dv5Listener.RandomNodes()
+
+	d.startDiscoveryPublisher()
 
 	defer iter.Close()
 	defer close(d.out)
@@ -135,27 +193,36 @@ func (d *DiscoveryV5) Serve(ctx context.Context) error {
 					continue
 				}
 
-				if hInfo != nil && !d.seenNodes[hInfo.ID] {
-					d.out <- peer.AddrInfo{
+				if hInfo != nil && !d.seenNodes[hInfo.ID].Flag {
+					select {
+					case d.out <- peer.AddrInfo{
 						ID:    hInfo.ID,
 						Addrs: hInfo.MAddrs,
+					}:
+					default:
+						d.log.Debug().Msg("Disc out channel is full")
 					}
 
+					d.seenNodes[hInfo.ID] = NodeInfo{Node: *node, Flag: true}
+
+					externalIp := d.Dv5Listener.LocalNode().Node().IP()
+
 					d.log.Info().
-						Str("ID", hInfo.ID.String()).
-						Str("IP", hInfo.IP).
-						Int("Port", hInfo.Port).
-						Str("ENR", node.String()).
-						Any("Maddr", hInfo.MAddrs).
-						Any("Attnets", hInfo.Attr[EnrAttnetsAttribute]).
-						Any("AttnetsNum", hInfo.Attr[EnrAttnetsNumAttribute]).
+						Str("id", hInfo.ID.String()).
+						Str("ip", hInfo.IP).
+						Int("port", hInfo.Port).
+						Any("attnets", hInfo.Attr[EnrAttnetsAttribute]).
+						Str("enr", node.String()).
+						Str("external_ip", externalIp.String()).
+						Int("total", len(d.seenNodes)).
 						Msg("Discovered new node")
 
 					// Log to file
 					fmt.Fprintf(d.fileLogger, "%s ID: %s, IP: %s, Port: %d, ENR: %s, Maddr: %v, Attnets: %v, AttnetsNum: %v\n",
 						time.Now().Format(time.RFC3339), hInfo.ID.String(), hInfo.IP, hInfo.Port, node.String(), hInfo.MAddrs, hInfo.Attr[EnrAttnetsAttribute], hInfo.Attr[EnrAttnetsNumAttribute])
 
-					d.seenNodes[hInfo.ID] = true
+					// Send peer event to channel
+					d.sendPeerEvent(ctx, node, hInfo)
 				}
 			}
 		}
@@ -214,7 +281,7 @@ func WithIPAndPorts(ip string, port int) RemoteHostOptions {
 		h.Port = port
 
 		// Compose Multiaddress from data
-		mAddr, err := ma.NewMultiaddr(fmt.Sprintf("/ip4/%s/tcp/%d", ip, port))
+		mAddr, err := MaddrFrom(ip, uint(port))
 		if err != nil {
 			return err
 		}
@@ -243,4 +310,13 @@ func NewHostInfo(peerID peer.ID, opts ...RemoteHostOptions) *HostInfo {
 	}
 
 	return hInfo
+}
+
+// attnetsEntry returns the fully-subscribed attnets entry for the ENR
+func attnetsEntry() enr.Entry {
+	bitV := bitfield.NewBitvector64()
+	for i := uint64(0); i < bitV.Len(); i++ {
+		bitV.SetBitAt(i, true)
+	}
+	return enr.WithEntry("attnets", bitV.Bytes())
 }

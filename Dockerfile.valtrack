@@ -7,10 +7,9 @@ RUN go mod download && go mod verify
 COPY . .
 RUN go build -v -o /run-app .
 
+EXPOSE 9000
 
 FROM debian:bookworm
 
 COPY --from=builder /run-app /usr/local/bin/
 CMD ["run-app"]
-
-EXPOSE 9000

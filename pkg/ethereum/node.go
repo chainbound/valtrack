@@ -3,8 +3,6 @@ package ethereum
 import (
 	"context"
 	"fmt"
-	"log/slog"
-	"net"
 	"os"
 	"sync"
 	"time"
@@ -18,18 +16,18 @@ import (
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/p2p/security/noise"
 	"github.com/libp2p/go-libp2p/p2p/transport/tcp"
-	ma "github.com/multiformats/go-multiaddr"
+	gomplex "github.com/libp2p/go-mplex"
+	"github.com/nats-io/nats.go"
+	"github.com/nats-io/nats.go/jetstream"
 	"github.com/pkg/errors"
 	"github.com/prysmaticlabs/prysm/v5/beacon-chain/p2p/encoder"
 	eth "github.com/prysmaticlabs/prysm/v5/proto/prysm/v1alpha1"
-	pb "github.com/prysmaticlabs/prysm/v5/proto/prysm/v1alpha1"
 	"github.com/rs/zerolog"
-	"github.com/thejerf/suture/v4"
 )
 
 type PeerMetadata struct {
 	LastSeen time.Time
-	Metadata *pb.MetaDataV1
+	Metadata *eth.MetaDataV1
 }
 
 type PeerBackoff struct {
@@ -40,20 +38,18 @@ type PeerBackoff struct {
 
 // Node represents a node in the network with a host and configuration.
 type Node struct {
-	host    host.Host
-	cfg     *config.NodeConfig
-	reqResp *ReqResp
-	disc    *DiscoveryV5
-
-	// The suture supervisor that is the root of the service tree
-	sup *suture.Supervisor
-
-	log        zerolog.Logger
-	fileLogger *os.File
-
-	backoffCache  map[peer.ID]*PeerBackoff
-	metadataCache map[peer.ID]*PeerMetadata
-	cacheMutex    sync.Mutex
+	host              host.Host
+	cfg               *config.NodeConfig
+	reqResp           *ReqResp
+	disc              *DiscoveryV5
+	js                jetstream.JetStream
+	log               zerolog.Logger
+	fileLogger        *os.File
+	backoffCache      map[peer.ID]*PeerBackoff
+	metadataCache     map[peer.ID]*PeerMetadata
+	cacheMutex        sync.RWMutex
+	metadataEventChan chan *MetadataReceivedEvent
+	reconnectChan     chan peer.ID
 }
 
 // NewNode initializes a new Node using the provided configuration and options.
@@ -62,19 +58,28 @@ func NewNode(cfg *config.NodeConfig) (*Node, error) {
 
 	file, err := os.Create("handshakes.log")
 	if err != nil {
-		return nil, errors.Wrap(err, "Failed to create log file")
+		return nil, errors.Wrap(err, "failed to create log file")
 	}
 
 	data, err := cfg.PrivateKey.Raw()
 	discKey, _ := gcrypto.ToECDSA(data)
 	if err != nil {
-		return nil, errors.Wrap(err, "Failed to generate discv5 key")
+		return nil, errors.Wrap(err, "failed to generate discv5 key")
 	}
+
+	// TODO: read config from node config
 	conf := config.DefaultDiscConfig
 	disc, err := NewDiscoveryV5(discKey, &conf)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to create DiscoveryV5 service")
+	}
 
 	listenMaddr, err := MaddrFrom(cfg.IP, uint(cfg.Port))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create multiaddr: %w", err)
+	}
 
+	gomplex.ResetStreamTimeout = 5 * time.Second
 	opts := []libp2p.Option{
 		libp2p.ListenAddrs(listenMaddr),
 		libp2p.Identity(cfg.PrivateKey),
@@ -93,6 +98,8 @@ func NewNode(cfg *config.NodeConfig) (*Node, error) {
 		return nil, fmt.Errorf("failed to create libp2p host: %w", err)
 	}
 
+	log.Info().Any("listen_addrs", h.Network().ListenAddresses()).Msg("Created new libp2p host")
+
 	reqRespCfg := &ReqRespConfig{
 		ForkDigest:   cfg.ForkDigest,
 		Encoder:      encoder.SszNetworkEncoder{},
@@ -106,20 +113,51 @@ func NewNode(cfg *config.NodeConfig) (*Node, error) {
 		return nil, fmt.Errorf("failed to create reqresp: %w", err)
 	}
 
+	url := os.Getenv("NATS_URL")
+	if url == "" {
+		url = nats.DefaultURL
+	}
+
+	// Initialize NATS JetStream
+	nc, err := nats.Connect(url)
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to NATS: %w", err)
+	}
+
+	js, err := jetstream.New(nc)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create JetStream context: %w", err)
+	}
+
+	cfgjs := jetstream.StreamConfig{
+		Name:      "EVENTS",
+		Retention: jetstream.InterestPolicy,
+		Subjects:  []string{"events.metadata_received", "events.peer_discovered"},
+	}
+
+	ctxJs := context.Background()
+
+	_, err = js.CreateOrUpdateStream(ctxJs, cfgjs)
+	if err != nil {
+		return nil, errors.Wrap(err, "Failed to create JetStream stream")
+	}
+
 	// Log the node's peer ID and addresses
 	log.Info().Str("peer_id", h.ID().String()).Any("Maddr", h.Addrs()).Msg("Initialized new libp2p Host")
 
 	// Return the fully initialized Node
 	return &Node{
-		host:          h,
-		cfg:           cfg,
-		reqResp:       reqResp,
-		disc:          disc,
-		sup:           suture.NewSimple("eth"),
-		log:           log,
-		fileLogger:    file,
-		backoffCache:  make(map[peer.ID]*PeerBackoff),
-		metadataCache: make(map[peer.ID]*PeerMetadata),
+		host:              h,
+		cfg:               cfg,
+		reqResp:           reqResp,
+		disc:              disc,
+		js:                js,
+		log:               log,
+		fileLogger:        file,
+		backoffCache:      make(map[peer.ID]*PeerBackoff),
+		metadataCache:     make(map[peer.ID]*PeerMetadata),
+		metadataEventChan: make(chan *MetadataReceivedEvent, 100),
+		reconnectChan:     make(chan peer.ID, 100),
 	}, nil
 }
 
@@ -140,65 +178,108 @@ func (n *Node) Start(ctx context.Context) error {
 		return fmt.Errorf("register RPC handlers: %w", err)
 	}
 
+	n.log.Info().Msg("Starting node services")
+
 	// Register the node itself as the notifiee for network connection events
 	n.host.Network().Notify(n)
 
-	// Start the discovery service
-	n.sup.Add(n.disc)
+	n.startMetadataPublisher()
 
-	log := log.NewLogger("peer_dialer")
-	for i := 0; i < 16; i++ {
-		cs := &PeerDialer{
-			host:     n.host,
-			peerChan: n.disc.out,
-			maxPeers: n.cfg.MaxPeerCount,
-			log:      log,
-		}
-		n.sup.Add(cs)
+	// Start the discovery service
+	go n.runDiscovery(ctx)
+
+	// Start the peer dialer service
+	for i := 0; i < n.cfg.ConcurrentDialers; i++ {
+		go n.runPeerDialer(ctx)
 	}
 
 	// Start the timer function to attempt reconnections every 30 seconds
 	go n.startReconnectionTimer()
+	n.startReconnectListener()
 
-	n.log.Info().Msg("Starting node services")
+	<-ctx.Done()
+	n.log.Info().Msg("Shutting down node services")
 
-	return n.sup.Serve(ctx)
+	return nil
+}
+
+func (n *Node) runDiscovery(ctx context.Context) {
+	if err := n.disc.Serve(ctx); err != nil && ctx.Err() == nil {
+		n.log.Error().Err(err).Msg("DiscoveryV5 service stopped unexpectedly")
+	}
+}
+
+func (n *Node) runPeerDialer(ctx context.Context) {
+	cs := &PeerDialer{
+		host:     n.host,
+		peerChan: n.disc.out,
+		log:      log.NewLogger("peer_dialer"),
+	}
+	if err := cs.Serve(ctx); err != nil && ctx.Err() == nil {
+		n.log.Error().Err(err).Msg("PeerDialer service stopped unexpectedly")
+	}
 }
 
 func (n *Node) startReconnectionTimer() {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 
-	for {
-		select {
-		case <-ticker.C:
-			n.reconnectPeers()
-		}
+	for range ticker.C {
+		n.reconnectPeers()
 	}
 }
 
 func (n *Node) reconnectPeers() {
-	n.cacheMutex.Lock()
-	defer n.cacheMutex.Unlock()
+	n.cacheMutex.RLock()
+	defer n.cacheMutex.RUnlock()
+	n.log.Info().Msg("Attempting to reconnect to peers")
 
 	for pid, backoff := range n.backoffCache {
+		// TODO: Depending on the error we might not want to reconnect
 		if time.Since(backoff.LastSeen) >= 30*time.Second && backoff.BackoffCounter < 10 {
-			n.log.Debug().Str("peer", pid.String()).Msg("Attempting to reconnect to peer")
-
-			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-			err := n.host.Connect(ctx, backoff.AddrInfo)
-			cancel()
-
-			if err != nil {
-				n.log.Debug().Str("peer", pid.String()).Msg("Failed to reconnect to peer")
-				backoff.LastSeen = time.Now()
-				backoff.BackoffCounter++
-			} else {
-				n.log.Info().Str("peer", pid.String()).Msg("Successfully reconnected to peer")
-				delete(n.backoffCache, pid)
-			}
+			n.log.Debug().Str("peer", pid.String()).Int("backoff_counter", backoff.BackoffCounter).Msg("Attempting to reconnect to peer")
+			n.reconnectChan <- pid
+		} else if backoff.BackoffCounter >= 10 {
+			n.log.Debug().Str("peer", pid.String()).Int("backoff_counter", backoff.BackoffCounter).Msg("Removing peer from backoff cache")
+			n.removeFromBackoffCache(pid)
 		}
 	}
+}
+
+func (n *Node) startReconnectListener() {
+	go func() {
+		for pid := range n.reconnectChan {
+			go func() {
+				n.cacheMutex.RLock()
+				backoff, exists := n.backoffCache[pid]
+				n.cacheMutex.RUnlock()
+
+				if !exists {
+					return
+				}
+
+				ctx, cancel := context.WithTimeout(context.Background(), n.cfg.DialTimeout)
+				err := n.host.Connect(ctx, backoff.AddrInfo)
+				cancel()
+
+				if err != nil {
+					n.cacheMutex.Lock()
+
+					backoff := n.backoffCache[pid]
+
+					backoff.LastSeen = time.Now()
+					backoff.BackoffCounter += 1
+
+					n.cacheMutex.Unlock()
+
+					n.log.Debug().Str("peer", pid.String()).Int("backoff_counter", backoff.BackoffCounter).Msg("Failed to reconnect to peer")
+				} else {
+					n.log.Info().Str("peer", pid.String()).Msg("Successfully reconnected to peer")
+				}
+
+			}()
+		}
+	}()
 }
 
 func (n *Node) addToBackoffCache(pid peer.ID, addrInfo peer.AddrInfo) {
@@ -224,48 +305,47 @@ func (n *Node) addToBackoffCache(pid peer.ID, addrInfo peer.AddrInfo) {
 	}
 }
 
-func (n *Node) addToMetadataCache(pid peer.ID, metadata *pb.MetaDataV1) {
+func (n *Node) removeFromBackoffCache(pid peer.ID) {
 	n.cacheMutex.Lock()
 	defer n.cacheMutex.Unlock()
 
-	n.metadataCache[pid] = &PeerMetadata{
-		LastSeen: time.Now(),
-		Metadata: &pb.MetaDataV1{},
-	}
-
-	n.log.Debug().Str("peer", pid.String()).Msg("Added peer to metadata cache")
+	delete(n.backoffCache, pid)
+	n.log.Debug().Str("peer", pid.String()).Msg("Removed peer from backoff cache")
 }
 
-func (n *Node) getMetadataFromCache(pid peer.ID) (*PeerMetadata, error) {
-	n.cacheMutex.Lock()
-	defer n.cacheMutex.Unlock()
+// func (n *Node) getBackoffCounter(pid peer.ID) int {
+// 	n.cacheMutex.RLock()
+// 	defer n.cacheMutex.RUnlock()
+
+// 	backoff, exists := n.backoffCache[pid]
+// 	if !exists {
+// 		return 0
+// 	}
+
+// 	return backoff.BackoffCounter
+// }
+
+func (n *Node) addToMetadataCache(pid peer.ID, metadata *eth.MetaDataV1) {
+	// TODO: we seeem to run into a deadlock here. Ignore for now.
+	// n.removeFromBackoffCache(pid)
+
+	// NOTE: Peer ID will be unique, so no need to lock the cache
+	n.metadataCache[pid] = &PeerMetadata{
+		LastSeen: time.Now(),
+		Metadata: metadata,
+	}
+
+	n.log.Debug().Str("peer", pid.String()).Str("metadata", metadata.String()).Msg("Added peer to metadata cache")
+}
+
+func (n *Node) getMetadataFromCache(pid peer.ID) *PeerMetadata {
+	n.cacheMutex.RLock()
+	defer n.cacheMutex.RUnlock()
 
 	metadata, exists := n.metadataCache[pid]
 	if !exists {
-		return nil, fmt.Errorf("metadata not found for peer: %s", pid)
+		return nil
 	}
 
-	return metadata, nil
-}
-
-// MaddrFrom takes in an ip address string and port to produce a go multiaddr format.
-func MaddrFrom(ip string, port uint) (ma.Multiaddr, error) {
-	parsed := net.ParseIP(ip)
-	if parsed == nil {
-		return nil, fmt.Errorf("invalid IP address: %s", ip)
-	} else if parsed.To4() != nil {
-		return ma.NewMultiaddr(fmt.Sprintf("/ip4/%s/tcp/%d", ip, port))
-	} else if parsed.To16() != nil {
-		return ma.NewMultiaddr(fmt.Sprintf("/ip6/%s/tcp/%d", ip, port))
-	} else {
-		return nil, fmt.Errorf("invalid IP address: %s", ip)
-	}
-}
-
-func LogAttrPeerID(pid peer.ID) slog.Attr {
-	return slog.String("AttrKeyPeerID", pid.String())
-}
-
-func LogAttrError(err error) slog.Attr {
-	return slog.Attr{Key: "AttrKeyError", Value: slog.AnyValue(err)}
+	return metadata
 }
