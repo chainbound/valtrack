@@ -1,0 +1,4 @@
+# flyctl launch added from .gitignore
+**/peerstore.db
+**/*.log
+fly.toml

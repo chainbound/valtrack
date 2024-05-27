@@ -1,0 +1,3 @@
+FROM nats:latest
+
+COPY nats-server.conf /nats-server.conf

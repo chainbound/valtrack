@@ -1,0 +1,3 @@
+peerstore.db
+*.log
+*.py
