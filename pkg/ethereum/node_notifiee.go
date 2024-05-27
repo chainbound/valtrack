@@ -134,11 +134,12 @@ func (n *Node) handleInboundConnection(pid peer.ID) {
 	}()
 
 	// Wait max 5 seconds for the remote status to come in
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	if err := n.waitForStatus(ctx, pid); err != nil {
 		n.log.Warn().Str("peer", pid.String()).Msg("Timed out waiting for status")
+		return
 	}
 
 	ctx, cancel = context.WithTimeout(context.Background(), n.cfg.DialTimeout)
