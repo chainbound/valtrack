@@ -5,7 +5,6 @@ import (
 	"crypto/ecdsa"
 	"crypto/rand"
 	"fmt"
-	"time"
 
 	"github.com/chainbound/valtrack/config"
 
@@ -13,7 +12,6 @@ import (
 	"github.com/decred/dcrd/dcrec/secp256k1/v4"
 	gcrypto "github.com/ethereum/go-ethereum/crypto"
 	crypto "github.com/libp2p/go-libp2p/core/crypto"
-	"github.com/prysmaticlabs/prysm/v5/beacon-chain/p2p/encoder"
 	"github.com/prysmaticlabs/prysm/v5/config/params"
 )
 
@@ -36,13 +34,9 @@ func NewDiscovery() (*Discovery, error) {
 
 	privateKey := (*crypto.Secp256k1PrivateKey)(secp256k1.PrivKeyFromBytes(privBytes))
 
-	nodeConfig := &config.NodeConfig{
-		PrivateKey:   privateKey,
-		BeaconConfig: params.MainnetConfig(),
-		ForkDigest:   [4]byte{0x6a, 0x95, 0xa1, 0xa9}, // Mainnet fork digest
-		Encoder:      encoder.SszNetworkEncoder{},
-		DialTimeout:  5 * time.Second,
-	}
+	nodeConfig := &config.DefaultNodeConfig
+	nodeConfig.PrivateKey = privateKey
+	nodeConfig.BeaconConfig = params.MainnetConfig()
 
 	n, err := ethereum.NewNode(nodeConfig)
 
