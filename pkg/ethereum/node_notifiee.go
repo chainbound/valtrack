@@ -1,54 +1,38 @@
 package ethereum
 
 import (
+	"bytes"
 	"context"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
-	"strconv"
-	"strings"
 	"time"
 
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 	ma "github.com/multiformats/go-multiaddr"
-	eth "github.com/prysmaticlabs/prysm/v5/proto/prysm/v1alpha1"
+	"github.com/pkg/errors"
 )
 
 var _ network.Notifiee = (*Node)(nil)
 
-type MetadataReceivedEvent struct {
-	ENR        string         `json:"enr"`
-	ID         string         `json:"id"`
-	IP         string         `json:"ip"`
-	Port       int            `json:"port"`
-	MetaData   SimpleMetaData `json:"metadata"`
-	CrawlerID  string         `json:"crawler_id"`
-	CrawlerLoc string         `json:"crawler_location"`
-}
-
-type SimpleMetaData struct {
-	SeqNumber uint64
-	Attnets   string
-	Syncnets  []byte
-}
-
 func (n *Node) Connected(net network.Network, c network.Conn) {
-	n.log.Debug().
-		Str("peer", c.RemotePeer().String()).
+	pid := c.RemotePeer()
+
+	n.log.Info().
+		Str("peer", pid.String()).
 		Str("dir", c.Stat().Direction.String()).
 		Int("total", len(n.host.Network().Peers())).
 		Msg("Connected Peer")
 
 	if c.Stat().Direction == network.DirOutbound {
-		go n.handleOutboundConnection(c.RemotePeer())
+		go n.handleOutboundConnection(pid)
 	} else if c.Stat().Direction == network.DirInbound {
-		go n.handleInboundConnection(c.RemotePeer())
+		go n.handleInboundConnection(pid)
 	}
 }
 
 func (n *Node) Disconnected(net network.Network, c network.Conn) {
-	if _, err := n.getMetadataFromCache(c.RemotePeer()); err == nil {
+	if n.getMetadataFromCache(c.RemotePeer()) != nil {
 		n.log.Info().
 			Str("peer", c.RemotePeer().String()).
 			Msg("Disconnected from handshaked peer")
@@ -60,73 +44,92 @@ func (n *Node) Listen(net network.Network, maddr ma.Multiaddr) {}
 func (n *Node) ListenClose(net network.Network, maddr ma.Multiaddr) {}
 
 func (n *Node) handleOutboundConnection(pid peer.ID) {
-	n.log.Info().Str("peer", pid.String()).Msg("Handling new outbound connection")
-
 	ctx, cancel := context.WithTimeout(context.Background(), n.cfg.DialTimeout)
 	defer cancel()
 
+	// Cleanup function
+	defer func() {
+		// Don't do anything if we're already disconnected
+		if n.host.Network().Connectedness(pid) != network.Connected {
+			return
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+
+		err := n.reqResp.Goodbye(ctx, pid, 3) // NOTE: Figure out the correct reason code
+		if err != nil {
+			n.log.Debug().Str("peer", pid.String()).Err(err).Msg("Failed to send goodbye message")
+		}
+
+		n.host.Network().ClosePeer(pid)
+	}()
+
 	addrs := n.host.Peerstore().Addrs(pid)
 	if len(addrs) == 0 {
-		n.log.Fatal().Str("No addresses found for peer", pid.String())
+		n.log.Error().Str("peer", pid.String()).Msg("No addresses found for peer")
+		return
 	}
 
-	valid := n.validatePeer(ctx, pid, peer.AddrInfo{ID: pid, Addrs: addrs[:1]})
+	addrInfo := peer.AddrInfo{ID: pid, Addrs: addrs}
+	if err := n.validatePeer(ctx, pid, addrInfo); err != nil {
+		n.log.Warn().Str("peer", pid.String()).Err(err).Msg("Handshake failed")
+		n.addToBackoffCache(pid, addrInfo)
 
-	if !valid {
-		n.log.Info().Str("peer", pid.String()).Msg("Handshake failed")
-		n.host.Peerstore().RemovePeer(pid) // NOTE: Figure out the reason for removing
+		// TODO: Should we remove peer?
+		// n.host.Peerstore().RemovePeer(pid)
+		return
 	}
 
-	n.reqResp.Goodbye(ctx, pid, 3) // NOTE: Figure out the correct reason code
-	n.host.Network().ClosePeer(pid)
 }
 
 func (n *Node) handleInboundConnection(pid peer.ID) {
 	n.log.Info().Str("peer", pid.String()).Msg("Handling new inbound connection")
 
-	// NOTE: This timeout will be used for all the operations in this function
+	// Cleanup function
+	defer func() {
+		if n.host.Network().Connectedness(pid) != network.Connected {
+			return
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+
+		err := n.reqResp.Goodbye(ctx, pid, 3) // NOTE: Figure out the correct reason code
+		if err != nil {
+			n.log.Debug().Str("peer", pid.String()).Err(err).Msg("Failed to send goodbye message")
+		}
+
+		n.host.Network().ClosePeer(pid)
+	}()
+
+	// Sleep 5 seconds to allow the handshake to complete
+	// TODO: this should be handled in the shared peerstore, i.e. saving the status message
+	time.Sleep(5 * time.Second)
+
 	ctx, cancel := context.WithTimeout(context.Background(), n.cfg.DialTimeout)
 	defer cancel()
 
-	addrs := n.host.Peerstore().Addrs(pid)
-	if len(addrs) == 0 {
-		n.log.Fatal().Str("No addresses found for peer", pid.String())
-	}
-
-	valid := n.validatePeer(ctx, pid, peer.AddrInfo{ID: pid, Addrs: addrs[:1]})
-
-	if !valid {
-		n.log.Info().Str("peer", pid.String()).Msg("Handshake failed, disconnecting")
-		n.host.Peerstore().RemovePeer(pid)
-		n.host.Network().ClosePeer(pid)
+	if n.host.Network().Connectedness(pid) != network.Connected {
+		n.log.Warn().Str("peer", pid.String()).Msg("Connection was closed before handshake completed")
 		return
-	}
-
-	n.reqResp.Goodbye(ctx, pid, 3) // NOTE: Figure out the correct reason code
-	n.host.Network().ClosePeer(pid)
-}
-
-func (n *Node) validatePeer(ctx context.Context, pid peer.ID, addrInfo peer.AddrInfo) bool {
-	st, err := n.reqResp.Status(ctx, pid)
-	if err != nil {
-		n.log.Debug().Str("peer", pid.String()).Err(err).Msg("Failed to get status from peer")
-		n.addToBackoffCache(pid, addrInfo)
-		return false
-	}
-
-	if err := n.reqResp.Ping(ctx, pid); err != nil {
-		n.log.Debug().Str("peer", pid.String()).Err(err).Msg("Failed to ping peer")
-		n.addToBackoffCache(pid, addrInfo)
-		return false
 	}
 
 	md, err := n.reqResp.MetaData(ctx, pid)
 	if err != nil {
-		n.log.Debug().Str("peer", pid.String()).Err(err).Msg("Failed to get metadata from peer")
-		n.addToBackoffCache(pid, addrInfo)
-		return false
+		n.log.Warn().Str("peer", pid.String()).Err(err).Msg("Failed requesting metadata")
+		return
 	}
 
+	addrs := n.host.Peerstore().Addrs(pid)
+	if len(addrs) == 0 {
+		n.log.Error().Str("peer", pid.String()).Msg("No addresses found on inbound peer")
+		return
+	}
+
+	addrInfo := peer.AddrInfo{ID: pid, Addrs: addrs}
+
+	n.sendMetadataEvent(ctx, pid, addrInfo, md)
 	n.addToMetadataCache(pid, md)
 
 	n.log.Info().
@@ -135,51 +138,43 @@ func (n *Node) validatePeer(ctx context.Context, pid peer.ID, addrInfo peer.Addr
 		Str("Attnets", hex.EncodeToString(md.Attnets)).
 		Msg("Performed successful handshake")
 
-	fmt.Fprintf(n.fileLogger, "%s ID: %v, SeqNum: %v, Attnets: %s, ForkDigest: %s\n",
-		time.Now().Format(time.RFC3339), pid.String(), md.SeqNumber, hex.EncodeToString(md.Attnets), hex.EncodeToString(st.ForkDigest))
-
-	// Start the publishing process in a separate goroutine
-	go n.publishMetadataEvent(ctx, pid, addrInfo, md)
-
-	return true
+	fmt.Fprintf(n.fileLogger, "%s ID: %v, SeqNum: %v, Attnets: %s\n",
+		time.Now().Format(time.RFC3339), pid.String(), md.SeqNumber, hex.EncodeToString(md.Attnets))
 }
 
-func (n *Node) publishMetadataEvent(ctx context.Context, pid peer.ID, addrInfo peer.AddrInfo, md *eth.MetaDataV1) {
-	// Create a separate context for the publishing operation
-	publishCtx, publishCancel := context.WithTimeout(context.Background(), 3*time.Second) // Adjust the timeout as needed
-	defer publishCancel()
-
-	// Extract the IP and Port from the address.
-	addressParts := strings.Split(addrInfo.Addrs[0].String(), "/")
-	ip := addressParts[2]
-	port, err := strconv.Atoi(addressParts[4])
+func (n *Node) validatePeer(ctx context.Context, pid peer.ID, addrInfo peer.AddrInfo) error {
+	st, err := n.reqResp.Status(ctx, pid)
 	if err != nil {
-		n.log.Error().Err(err).Msg("Failed to convert port to int")
-		return
-	}
-	node := n.disc.seenNodes[pid].Node
-
-	// Publish to NATS
-	metadataEvent := MetadataReceivedEvent{
-		ENR:        node.String(),
-		ID:         pid.String(),
-		IP:         ip,
-		Port:       port,
-		MetaData:   SimpleMetaData{SeqNumber: md.SeqNumber, Attnets: (hex.EncodeToString(md.Attnets)), Syncnets: md.Syncnets},
-		CrawlerID:  getCrawlerMachineID(),
-		CrawlerLoc: getCrawlerLocation(),
+		return errors.Wrap(err, "Failed to get status from peer")
 	}
 
-	eventData, err := json.Marshal(metadataEvent)
+	// If the status head slot is higher than the current, update it
+	if bytes.Equal(st.ForkDigest, n.cfg.ForkDigest[:]) {
+		if st.HeadSlot > n.reqResp.status.HeadSlot {
+			n.reqResp.SetStatus(st)
+		}
+	}
+
+	if err := n.reqResp.Ping(ctx, pid); err != nil {
+		return errors.Wrap(err, "Failed to ping peer")
+	}
+
+	md, err := n.reqResp.MetaData(ctx, pid)
 	if err != nil {
-		n.log.Error().Err(err).Msg("Failed to marshal metadata event")
-		return
+		return errors.Wrap(err, "Failed to get metadata from peer")
 	}
 
-	ack, err := n.js.Publish(publishCtx, "events.metadata_received", eventData)
-	if err != nil {
-		n.log.Error().Err(err).Msg("Failed to publish metadata event")
-		return
-	}
-	n.log.Debug().Msgf("Published metadata event with seq: %v", ack.Sequence)
+	n.sendMetadataEvent(ctx, pid, addrInfo, md)
+	n.addToMetadataCache(pid, md)
+
+	n.log.Info().
+		Str("peer", pid.String()).
+		Int("Seq", int(md.SeqNumber)).
+		Str("Attnets", hex.EncodeToString(md.Attnets)).
+		Msg("Performed successful handshake")
+
+	fmt.Fprintf(n.fileLogger, "%s ID: %v, SeqNum: %v, Attnets: %s\n",
+		time.Now().Format(time.RFC3339), pid.String(), md.SeqNumber, hex.EncodeToString(md.Attnets))
+
+	return nil
 }

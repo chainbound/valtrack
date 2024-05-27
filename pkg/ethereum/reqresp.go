@@ -38,9 +38,6 @@ type ReqResp struct {
 	host host.Host
 	cfg  *ReqRespConfig
 
-	// Node's delegate peer ID. NOT IN USE
-	delegate peer.ID
-
 	metaData   *pb.MetaDataV1
 	metaDataMu sync.RWMutex
 
@@ -119,11 +116,11 @@ func (r *ReqResp) SetStatus(status *pb.Status) {
 	}
 
 	r.log.Info().
-		Str("ForkDigest", hex.EncodeToString(status.ForkDigest)).
-		Str("FinalizedRoot", hex.EncodeToString(status.FinalizedRoot)).
-		Uint64("FinalizedEpoch", uint64(status.FinalizedEpoch)).
-		Str("HeadRoot", hex.EncodeToString(status.HeadRoot)).
-		Uint64("HeadSlot", uint64(status.HeadSlot)).
+		Str("fork_digest", hex.EncodeToString(status.ForkDigest)).
+		Str("finalized_root", hex.EncodeToString(status.FinalizedRoot)).
+		Uint64("finalized_epoch", uint64(status.FinalizedEpoch)).
+		Str("head_root", hex.EncodeToString(status.HeadRoot)).
+		Uint64("head_slot", uint64(status.HeadSlot)).
 		Msg("Status updated")
 
 	r.status = status
@@ -131,7 +128,7 @@ func (r *ReqResp) SetStatus(status *pb.Status) {
 
 // RegisterHandlers registers all RPC handlers. It verifies that initial status and metadata are valid.
 func (r *ReqResp) RegisterHandlers(ctx context.Context) error {
-	fmt.Println("Registering RPC handlers")
+	r.log.Info().Msg("Registering RPC handlers")
 
 	r.statusMu.RLock()
 	defer r.statusMu.RUnlock()
@@ -167,7 +164,6 @@ func (r *ReqResp) protocolID(topic string) protocol.ID {
 }
 
 func (r *ReqResp) wrapStreamHandler(ctx context.Context, name string, handler ContextStreamHandler) network.StreamHandler {
-
 	return func(s network.Stream) {
 		// Extract agent version from peerstore, defaulting to "n.a." if not present.
 		agentVersion, err := r.getAgentVersion(s.Conn().RemotePeer())
@@ -211,11 +207,6 @@ func (r *ReqResp) statusHandler(ctx context.Context, stream network.Stream) erro
 	req := &pb.Status{}
 	if err := r.readRequest(ctx, stream, req); err != nil {
 		return fmt.Errorf("read status request: %w", err)
-	}
-
-	// Optionally, update local status if the request comes from a trusted source.
-	if stream.Conn().RemotePeer() == r.delegate {
-		r.SetStatus(req) // Assuming SetStatus safely updates the status considering thread safety.
 	}
 
 	// Fetch a copy of the local status to respond with.
@@ -314,9 +305,6 @@ func (r *ReqResp) Goodbye(ctx context.Context, pid peer.ID, code uint64) error {
 		return fmt.Errorf("write goodbye request: %w", err)
 	}
 
-	// we have the data that we want, so ignore error here
-	_ = stream.Close() // (both sides should actually be already closed)
-
 	return nil
 }
 
@@ -344,14 +332,6 @@ func (r *ReqResp) Status(ctx context.Context, pid peer.ID) (status *pb.Status, e
 		return nil, fmt.Errorf("read status response: %w", err)
 	}
 
-	// if we requested the status from our delegate
-	if stream.Conn().RemotePeer() == r.delegate {
-		r.SetStatus(resp)
-	}
-
-	// we have the data that we want, so ignore error here
-	_ = stream.Close() // (both sides should actually be already closed)
-
 	return resp, nil
 }
 
@@ -378,9 +358,6 @@ func (r *ReqResp) Ping(ctx context.Context, pid peer.ID) error {
 		return fmt.Errorf("read ping response: %w", err)
 	}
 
-	// we have the data that we want, so ignore error here
-	_ = stream.Close() // (both sides should actually be already closed)
-
 	return nil
 }
 
@@ -397,9 +374,6 @@ func (r *ReqResp) MetaData(ctx context.Context, pid peer.ID) (resp *pb.MetaDataV
 	if err := r.readResponse(ctx, stream, resp); err != nil {
 		return resp, fmt.Errorf("read ping response: %w", err)
 	}
-
-	// we have the data that we want, so ignore error here
-	_ = stream.Close() // (both sides should actually be already closed)
 
 	return resp, nil
 }

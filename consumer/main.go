@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"os"
 	"os/signal"
@@ -17,71 +18,54 @@ import (
 
 func main() {
 	log := log.NewLogger("consumer")
-	// Set up NATS connection
-	url := os.Getenv("NATS_URL")
-	if url == "" {
-		url = nats.DefaultURL
-	}
 
-	nc, err := nats.Connect(url)
+	var natsURL string
+	flag.StringVar(&natsURL, "nats-url", nats.DefaultURL, "NATS server URL")
+
+	flag.Parse()
+
+	nc, err := nats.Connect(natsURL)
 	if err != nil {
-		fmt.Printf("Error connecting to NATS: %v\n", err)
-		return
+		log.Fatal().Err(err).Msg("Error connecting to NATS")
 	}
-	defer nc.Drain()
+	defer nc.Close()
 
 	js, err := jetstream.New(nc)
 	if err != nil {
-		fmt.Printf("Error creating JetStream context: %v\n", err)
-		return
+		log.Fatal().Err(err).Msg("Error creating JetStream context")
 	}
 
-	// Set up a stream
-	stream, err := js.Stream(context.Background(), "EVENTS")
+	cctx, err := eventSourcingConsumer(js, log)
 	if err != nil {
-		fmt.Printf("Error creating stream: %v\n", err)
-		return
+		log.Fatal().Err(err).Msg("Error creating consumer")
 	}
-	fmt.Println("Created the stream")
+	defer cctx.Stop()
+
+	// Gracefully shutdown
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, os.Interrupt, syscall.SIGTERM, syscall.SIGINT)
+	<-quit
+}
+
+func eventSourcingConsumer(js jetstream.JetStream, log zerolog.Logger) (jetstream.ConsumeContext, error) {
+	ctx := context.Background()
 
 	// Set up a consumer
 	consumerCfg := jetstream.ConsumerConfig{
-		Durable:   "event-consumer",
-		AckPolicy: jetstream.AckExplicitPolicy,
+		Name:        "event-consumer",
+		Durable:     "event-consumer",
+		Description: "Consumes valtrack events",
+		AckPolicy:   jetstream.AckExplicitPolicy,
 	}
 
-	consumer, err := stream.CreateOrUpdateConsumer(context.Background(), consumerCfg)
+	consumer, err := js.CreateOrUpdateConsumer(ctx, "EVENTS", consumerCfg)
 	if err != nil {
-		fmt.Printf("Error creating consumer: %v\n", err)
-		return
+		return nil, err
 	}
 
-	// Signal handling for graceful shutdown
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-
-	go func() {
-		for {
-			select {
-			case <-sigChan:
-				fmt.Println("Received termination signal, exiting...")
-				return
-			default:
-				msgs, err := consumer.Fetch(10)
-				if err != nil {
-					fmt.Printf("Error fetching messages: %v\n", err)
-					return
-				}
-
-				for msg := range msgs.Messages() {
-					handleMessage(log, msg)
-				}
-			}
-		}
-	}()
-
-	fmt.Println("Consumer is running... Press Ctrl+C to exit.")
-	select {} // Run forever
+	return consumer.Consume(func(msg jetstream.Msg) {
+		go handleMessage(log, msg)
+	})
 }
 
 func handleMessage(log zerolog.Logger, msg jetstream.Msg) {

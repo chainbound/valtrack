@@ -8,6 +8,7 @@ require (
 	github.com/ferranbt/fastssz v0.1.2
 	github.com/libp2p/go-libp2p v0.33.1
 	github.com/libp2p/go-libp2p-mplex v0.9.0
+	github.com/libp2p/go-mplex v0.7.0
 	github.com/migalabs/armiarma v1.1.0
 	github.com/multiformats/go-multiaddr v0.12.2
 	github.com/nats-io/nats.go v1.35.0
@@ -16,7 +17,6 @@ require (
 	github.com/prysmaticlabs/go-bitfield v0.0.0-20210809151128-385d8c5e3fb7
 	github.com/prysmaticlabs/prysm/v5 v5.0.3
 	github.com/rs/zerolog v1.32.0
-	github.com/thejerf/suture/v4 v4.0.5
 	golang.org/x/time v0.5.0
 )
 
@@ -86,7 +86,6 @@ require (
 	github.com/libp2p/go-libp2p-asn-util v0.4.1 // indirect
 	github.com/libp2p/go-libp2p-core v0.19.1 // indirect
 	github.com/libp2p/go-libp2p-pubsub v0.10.0 // indirect
-	github.com/libp2p/go-mplex v0.7.0 // indirect
 	github.com/libp2p/go-msgio v0.3.0 // indirect
 	github.com/libp2p/go-nat v0.2.0 // indirect
 	github.com/libp2p/go-netroute v0.2.1 // indirect
