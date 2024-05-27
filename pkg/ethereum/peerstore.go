@@ -46,7 +46,7 @@ func (p *PeerInfo) IntoMetadataEvent() *MetadataReceivedEvent {
 		ClientVersion: p.clientVersion,
 		MetaData:      p.metadata,
 		// `epoch = slot // SLOTS_PER_EPOCH`
-		Epoch: uint(p.status.HeadSlot) / 32,
+		Epoch: int(p.status.HeadSlot) / 32,
 		// These should be set later
 		CrawlerID:  "",
 		CrawlerLoc: "",

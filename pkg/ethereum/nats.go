@@ -22,7 +22,7 @@ type PeerDiscoveredEvent struct {
 type MetadataReceivedEvent struct {
 	ID            string          `json:"id"`
 	Multiaddr     string          `json:"multiaddr"`
-	Epoch         uint            `json:"epoch"`
+	Epoch         int             `json:"epoch"`
 	MetaData      *eth.MetaDataV1 `json:"metadata"`
 	ClientVersion string          `json:"client_version"`
 	CrawlerID     string          `json:"crawler_id"`

@@ -40,7 +40,7 @@ type ParquetPeerDiscoveredEvent struct {
 type ParquetMetadataReceivedEvent struct {
 	ID            string          `parquet:"name=id, type=BYTE_ARRAY, convertedtype=UTF8"`
 	Multiaddr     string          `parquet:"name=multiaddr, type=BYTE_ARRAY, convertedtype=UTF8"`
-	Epoch         uint            `parquet:"name=epoch, type=INT32"`
+	Epoch         int             `parquet:"name=epoch, type=INT32"`
 	MetaData      *eth.MetaDataV1 `parquet:"name=metadata, type=BYTE_ARRAY, convertedtype=UTF8"` // Assuming eth.MetaDataV1 can be serialized to JSON string
 	ClientVersion string          `parquet:"name=client_version, type=BYTE_ARRAY, convertedtype=UTF8"`
 	CrawlerID     string          `parquet:"name=crawler_id, type=BYTE_ARRAY, convertedtype=UTF8"`
@@ -203,7 +203,7 @@ func storeMetadataReceivedEvent(pw *writer.ParquetWriter, event ethereum.Metadat
 	parquetEvent := ParquetMetadataReceivedEvent{
 		ID:            event.ID,
 		Multiaddr:     event.Multiaddr,
-		Epoch:         uint(event.Epoch),
+		Epoch:         int(event.Epoch),
 		MetaData:      event.MetaData,
 		ClientVersion: event.ClientVersion,
 		CrawlerID:     event.CrawlerID,
