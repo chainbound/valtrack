@@ -1,3 +1,4 @@
 peerstore.db
 *.log
 *.py
+*.parquet
