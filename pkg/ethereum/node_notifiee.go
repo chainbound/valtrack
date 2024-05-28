@@ -101,6 +101,9 @@ func (n *Node) handleOutboundConnection(pid peer.ID) {
 		n.peerstore.SetClientVersion(pid, v.(string))
 	}
 
+	// Sleep 2 seconds to allow for all subnet subscriptions to be processed
+	time.Sleep(2 * time.Second)
+
 	info := n.peerstore.Get(pid)
 	event := info.IntoMetadataEvent()
 
@@ -163,6 +166,9 @@ func (n *Node) handleInboundConnection(pid peer.ID) {
 	if v, err := n.host.Peerstore().Get(pid, "AgentVersion"); err == nil {
 		n.peerstore.SetClientVersion(pid, v.(string))
 	}
+
+	// Sleep 2 seconds to allow for all subnet subscriptions to be processed
+	time.Sleep(2 * time.Second)
 
 	info := n.peerstore.Get(pid)
 	event := info.IntoMetadataEvent()
