@@ -144,7 +144,9 @@ func (p *Peerstore) IsBackedOff(id peer.ID) bool {
 
 }
 
-func (p *Peerstore) SetConnected(id peer.ID) {
+// Reset MUST be called every time we've had a succesful handshake & metadata exchange with a peer.
+// It will reset the backoff counter and the last error, and remove the last status & metadata
+func (p *Peerstore) Reset(id peer.ID) {
 	p.Lock()
 	defer p.Unlock()
 
@@ -152,6 +154,10 @@ func (p *Peerstore) SetConnected(id peer.ID) {
 		info.backoffCounter = 0
 		info.lastSeen = time.Now()
 		info.lastErr = nil
+
+		// Remove status!
+		info.status = nil
+		info.metadata = nil
 	} else {
 		panic("peerstore: ResetBackoff: peer not found")
 	}

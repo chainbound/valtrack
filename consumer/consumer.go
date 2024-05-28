@@ -2,10 +2,8 @@ package consumer
 
 import (
 	"context"
-	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
-	"flag"
 	"fmt"
 	"os"
 	"os/signal"
@@ -15,13 +13,18 @@ import (
 	"github.com/chainbound/valtrack/pkg/ethereum"
 	"github.com/ethereum/go-ethereum/p2p/enode"
 	"github.com/google/uuid"
+	"github.com/libp2p/go-libp2p-core/peer"
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
+	"github.com/pkg/errors"
+	"github.com/prysmaticlabs/go-bitfield"
 	"github.com/prysmaticlabs/prysm/v5/beacon-chain/p2p"
 	"github.com/prysmaticlabs/prysm/v5/consensus-types/primitives"
 	"github.com/rs/zerolog"
 	"github.com/xitongsys/parquet-go-source/local"
 	"github.com/xitongsys/parquet-go/writer"
+
+	gcrypto "github.com/ethereum/go-ethereum/crypto"
 )
 
 type Consumer struct {
@@ -74,13 +77,8 @@ type SimpleMetaData struct {
 	Syncnets  string `parquet:"name=syncnets, type=BYTE_ARRAY, convertedtype=UTF8"`
 }
 
-func RunConsumer() {
+func RunConsumer(natsURL string) {
 	log := log.NewLogger("consumer")
-
-	var natsURL string
-	flag.StringVar(&natsURL, "nats-url", nats.DefaultURL, "NATS server URL")
-
-	flag.Parse()
 
 	nc, err := nats.Connect(natsURL)
 	if err != nil {
@@ -222,21 +220,19 @@ func handleMessage(cons Consumer, msg jetstream.Msg) {
 	}
 }
 
-// parseSubscribedSubnets parses the 8 byte bitvector of subscribed subnets into the subnet indexes
-func parseSubscribedSubnets(subnets []byte) []int64 {
-	var subscribedSubnets []int64
+func indexesFromBitfield(bitV bitfield.Bitvector64) []int64 {
+	indexes := make([]int64, 0, bitV.Len())
 
-	subnetsUint64 := binary.LittleEndian.Uint64(subnets)
-
-	for i := 0; i < 64; i++ {
-		if (subnetsUint64 & (1 << uint(i))) != 0 {
-			subscribedSubnets = append(subscribedSubnets, int64(i))
+	for i := int64(0); i < 64; i++ {
+		if bitV.BitAt(uint64(i)) {
+			indexes = append(indexes, i)
 		}
 	}
 
-	return subscribedSubnets
+	return indexes
 }
 
+// TODO: is this correct
 func extractShortLivedSubnets(subscribed []int64, longLived []int64) []int64 {
 	var shortLived []int64
 	for i := 0; i < 64; i++ {
@@ -257,17 +253,45 @@ func contains[T comparable](slice []T, item T) bool {
 	return false
 }
 
-func storeValidatorEvent(pw *writer.ParquetWriter, event ethereum.MetadataReceivedEvent, log zerolog.Logger) {
-	enode, err := enode.Parse(enode.ValidSchemes, event.ENR)
+func enodeFromPeerID(pid peer.ID) (enode.ID, error) {
+	pubkey, err := pid.ExtractPublicKey()
 	if err != nil {
-		log.Err(err).Str("enr", event.ENR).Msg("Error parsing ENR")
+		return enode.ID{}, errors.Wrap(err, "error extracting public key from peer ID")
+	}
+
+	// This encodes the public key in serialized, compressed secpk256k1 format
+	comp, err := pubkey.Raw()
+	if err != nil {
+		return enode.ID{}, errors.Wrap(err, "error converting pubkey to raw bytes")
+	}
+
+	decomp, err := gcrypto.DecompressPubkey(comp)
+	if err != nil {
+		return enode.ID{}, errors.Wrap(err, "error decompressing pubkey")
+
+	}
+
+	return enode.PubkeyToIDV4(decomp), nil
+}
+
+func storeValidatorEvent(pw *writer.ParquetWriter, event ethereum.MetadataReceivedEvent, log zerolog.Logger) {
+	pid, err := peer.Decode(event.ID)
+	if err != nil {
+		log.Err(err).Str("peer", event.ID).Msg("Error converting peer ID")
 		return
 	}
 
-	// 8 byte bitvector
-	subscribedSubnets := parseSubscribedSubnets(event.MetaData.Attnets)
+	nodeID, err := enodeFromPeerID(pid)
+	if err != nil {
+		log.Err(err).Str("peer", event.ID).Msg("Error converting peer ID to enode ID")
+		return
+	}
 
-	data, err := p2p.ComputeSubscribedSubnets(enode.ID(), primitives.Epoch(event.Epoch))
+	// Get the subscribed subnets from the metadata attnets
+	subscribedSubnets := indexesFromBitfield(event.MetaData.Attnets)
+
+	// Get the long-lived subnets from epoch & nodeID
+	data, err := p2p.ComputeSubscribedSubnets(nodeID, primitives.Epoch(event.Epoch))
 	longLived := convertUint64ToInt64(data)
 	if err != nil {
 		log.Err(err).Msg("Error computing subscribed subnets")

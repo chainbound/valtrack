@@ -64,7 +64,7 @@ func (n *Node) handleOutboundConnection(pid peer.ID) {
 
 		// Mark the peer as succesfully connected, which will reset the backoff
 		// and error to nil.
-		n.peerstore.SetConnected(pid)
+		n.peerstore.Reset(pid)
 
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
@@ -123,7 +123,7 @@ func (n *Node) handleInboundConnection(pid peer.ID) {
 
 		// Mark the peer as succesfully connected, which will reset the backoff
 		// and error to nil.
-		n.peerstore.SetConnected(pid)
+		n.peerstore.Reset(pid)
 
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()

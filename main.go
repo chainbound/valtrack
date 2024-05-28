@@ -16,6 +16,7 @@ import (
 
 type Config struct {
 	logLevel string
+	natsURL  string
 }
 
 func main() {
@@ -43,7 +44,7 @@ func main() {
 					level, _ := zerolog.ParseLevel(cfg.logLevel)
 					zerolog.SetGlobalLevel(level)
 
-					consumer.RunConsumer()
+					consumer.RunConsumer(cfg.natsURL)
 					return nil
 				},
 			},
@@ -55,6 +56,13 @@ func main() {
 				Aliases:     []string{"l"},
 				Value:       "info",
 				Destination: &cfg.logLevel,
+			},
+			&cli.StringFlag{
+				Name:        "nats-url",
+				Usage:       "NATS server URL (needs JetStream)",
+				Aliases:     []string{"n"},
+				Value:       "nats://localhost:4222",
+				Destination: &cfg.natsURL,
 			},
 		},
 	}
