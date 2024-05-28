@@ -18,7 +18,7 @@ var _ network.Notifiee = (*Node)(nil)
 func (n *Node) Connected(net network.Network, c network.Conn) {
 	pid := c.RemotePeer()
 
-	if n.peerstore.State(pid) == Connecting {
+	if n.peerstore.State(pid) != NotConnected {
 		// If we're already connecting, return
 		n.log.Debug().Str("peer", pid.String()).Msg("Already connecting to peer")
 		return
@@ -46,9 +46,10 @@ func (n *Node) Connected(net network.Network, c network.Conn) {
 
 func (n *Node) Disconnected(net network.Network, c network.Conn) {
 	pid := c.RemotePeer()
+	// Mark the peer as succesfully connected, which will reset the backoff
+	// and error to nil.
+	n.peerstore.Reset(pid)
 
-	// Mark peer as disconnected
-	n.peerstore.SetState(pid, NotConnected)
 	n.log.Info().Str("peer", pid.String()).Msg("Peer disconnected")
 }
 
@@ -62,10 +63,6 @@ func (n *Node) handleOutboundConnection(pid peer.ID) {
 
 	// Cleanup function
 	defer func() {
-		// Mark the peer as succesfully connected, which will reset the backoff
-		// and error to nil.
-		n.peerstore.Reset(pid)
-
 		// Don't do anything if we're already disconnected
 		if n.host.Network().Connectedness(pid) != network.Connected {
 			return
@@ -122,10 +119,6 @@ func (n *Node) handleInboundConnection(pid peer.ID) {
 
 	// Cleanup function
 	defer func() {
-		// Mark the peer as succesfully connected, which will reset the backoff
-		// and error to nil.
-		n.peerstore.Reset(pid)
-
 		if n.host.Network().Connectedness(pid) != network.Connected {
 			return
 		}
