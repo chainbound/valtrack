@@ -3,9 +3,13 @@ package ethereum
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/ethereum/go-ethereum/p2p/enode"
+	"github.com/nats-io/nats.go"
+	"github.com/nats-io/nats.go/jetstream"
+	"github.com/pkg/errors"
 	eth "github.com/prysmaticlabs/prysm/v5/proto/prysm/v1alpha1"
 )
 
@@ -30,9 +34,56 @@ type MetadataReceivedEvent struct {
 	Timestamp     int64           `json:"timestamp"` // Timestamp in UNIX milliseconds
 }
 
+func createNatsStream(url string) (js jetstream.JetStream, err error) {
+	// If empty URL, return nil and run without NATS
+	if url == "" {
+		return nil, nil
+	}
+	// Initialize NATS JetStream
+	nc, err := nats.Connect(url)
+	if err != nil {
+		return nil, errors.Wrap(err, "Failed to connect to NATS")
+	}
+
+	js, err = jetstream.New(nc)
+	if err != nil {
+		return nil, errors.Wrap(err, "Failed to create JetStream context")
+	}
+
+	cfgjs := jetstream.StreamConfig{
+		Name:      "EVENTS",
+		Retention: jetstream.InterestPolicy,
+		Subjects:  []string{"events.metadata_received", "events.peer_discovered"},
+	}
+
+	ctxJs := context.Background()
+
+	_, err = js.CreateOrUpdateStream(ctxJs, cfgjs)
+	if err != nil {
+		return nil, errors.Wrap(err, "Failed to create JetStream stream")
+	}
+	return js, nil
+}
+
 func (n *Node) sendMetadataEvent(ctx context.Context, event *MetadataReceivedEvent) {
 	event.CrawlerID = getCrawlerMachineID()
 	event.CrawlerLoc = getCrawlerLocation()
+
+	n.log.Info().
+		Str("id", event.ID).
+		Str("multiaddr", event.Multiaddr).
+		Uint("epoch", event.Epoch).
+		Any("metadata", event.MetaData).
+		Str("client_version", event.ClientVersion).
+		Str("crawler_id", event.CrawlerID).
+		Str("crawler_location", event.CrawlerLoc).
+		Msg("metadata_received event")
+
+	if n.js == nil {
+		fmt.Fprintf(n.fileLogger, "%s ID: %s, Multiaddr: %s, Epoch: %d, Metadata: %v, ClientVersion: %s, CrawlerID: %s, CrawlerLoc: %s\n",
+			time.Now().Format(time.RFC3339), event.ID, event.Multiaddr, event.Epoch, event.MetaData, event.ClientVersion, event.CrawlerID, event.CrawlerLoc)
+		return
+	}
 
 	select {
 	case n.metadataEventChan <- event:
@@ -75,6 +126,21 @@ func (d *DiscoveryV5) sendPeerEvent(ctx context.Context, node *enode.Node, hInfo
 		CrawlerID:  getCrawlerMachineID(),
 		CrawlerLoc: getCrawlerLocation(),
 		Timestamp:  time.Now().UnixMilli(),
+	}
+
+	d.log.Info().
+		Str("enr", node.String()).
+		Str("id", hInfo.ID.String()).
+		Str("ip", hInfo.IP).
+		Int("port", hInfo.Port).
+		Str("crawler_id", peerEvent.CrawlerID).
+		Str("crawler_location", peerEvent.CrawlerLoc).
+		Msg("peer_discovered event")
+
+	if d.js == nil {
+		fmt.Fprintf(d.fileLogger, "%s ENR: %s, ID: %s, IP: %s, Port: %d, CrawlerID: %s, CrawlerLoc: %s\n",
+			time.Now().Format(time.RFC3339), node.String(), hInfo.ID.String(), hInfo.IP, hInfo.Port, peerEvent.CrawlerID, peerEvent.CrawlerLoc)
+		return
 	}
 
 	select {

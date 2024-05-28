@@ -15,6 +15,7 @@ import (
 
 type Config struct {
 	logLevel string
+	natsURL  string
 }
 
 func main() {
@@ -31,7 +32,7 @@ func main() {
 					level, _ := zerolog.ParseLevel(cfg.logLevel)
 					zerolog.SetGlobalLevel(level)
 
-					runSentry()
+					runSentry(cfg.natsURL)
 					return nil
 				},
 			},
@@ -55,6 +56,13 @@ func main() {
 				Value:       "info",
 				Destination: &cfg.logLevel,
 			},
+			&cli.StringFlag{
+				Name:        "nats",
+				Usage:       "natsJS server url",
+				Aliases:     []string{"n"},
+				Value:       os.Getenv("NATS_URL"), // If nil, sentry will run without NATS
+				Destination: &cfg.natsURL,
+			},
 		},
 	}
 
@@ -64,8 +72,8 @@ func main() {
 
 }
 
-func runSentry() {
-	disc, err := discovery.NewDiscovery()
+func runSentry(natsURL string) {
+	disc, err := discovery.NewDiscovery(natsURL)
 	if err != nil {
 		panic(err)
 	}

@@ -56,6 +56,7 @@ type DiscConfig struct {
 	ForkDigest [4]byte
 	LogPath    string
 	Bootnodes  []*enode.Node
+	NatsURL    string
 }
 
 var DefaultDiscConfig DiscConfig = DiscConfig{
@@ -64,7 +65,7 @@ var DefaultDiscConfig DiscConfig = DiscConfig{
 	TCP:        9000,
 	DBPath:     "",
 	ForkDigest: [4]byte{0x6a, 0x95, 0xa1, 0xa9},
-	LogPath:    "nodes.log",
+	LogPath:    "peer_discovered.log",
 	Bootnodes:  GetEthereumBootnodes(),
 }
 
@@ -102,6 +103,8 @@ type NodeConfig struct {
 	ConcurrentDialers int
 	IP                string
 	Port              int
+	NatsURL           string
+	LogPath           string
 }
 
 var DefaultNodeConfig NodeConfig = NodeConfig{
@@ -113,4 +116,5 @@ var DefaultNodeConfig NodeConfig = NodeConfig{
 	ConcurrentDialers: 64,
 	IP:                "0.0.0.0",
 	Port:              9000,
+	LogPath:           "metadata_received.log",
 }
