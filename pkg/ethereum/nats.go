@@ -80,8 +80,12 @@ func (n *Node) sendMetadataEvent(ctx context.Context, event *MetadataReceivedEve
 		Msg("metadata_received event")
 
 	if n.js == nil {
-		fmt.Fprintf(n.fileLogger, "%s ID: %s, Multiaddr: %s, Epoch: %d, Metadata: %v, ClientVersion: %s, CrawlerID: %s, CrawlerLoc: %s\n",
-			time.Now().Format(time.RFC3339), event.ID, event.Multiaddr, event.Epoch, event.MetaData, event.ClientVersion, event.CrawlerID, event.CrawlerLoc)
+		json, err := json.Marshal(event)
+		if err != nil {
+			n.log.Error().Err(err).Msg("Failed to marshal metadata_received event")
+			return
+		}
+		fmt.Fprintln(n.fileLogger, string(json))
 		return
 	}
 
@@ -138,8 +142,12 @@ func (d *DiscoveryV5) sendPeerEvent(ctx context.Context, node *enode.Node, hInfo
 		Msg("peer_discovered event")
 
 	if d.js == nil {
-		fmt.Fprintf(d.fileLogger, "%s ENR: %s, ID: %s, IP: %s, Port: %d, CrawlerID: %s, CrawlerLoc: %s\n",
-			time.Now().Format(time.RFC3339), node.String(), hInfo.ID.String(), hInfo.IP, hInfo.Port, peerEvent.CrawlerID, peerEvent.CrawlerLoc)
+		json, err := json.Marshal(peerEvent)
+		if err != nil {
+			d.log.Error().Err(err).Msg("Failed to marshal peer_discovered event")
+			return
+		}
+		fmt.Fprintln(d.fileLogger, string(json))
 		return
 	}
 
