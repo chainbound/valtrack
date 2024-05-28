@@ -20,15 +20,16 @@ type PeerDiscoveredEvent struct {
 }
 
 type MetadataReceivedEvent struct {
-	ENR           string          `json:"enr"`
-	ID            string          `json:"id"`
-	Multiaddr     string          `json:"multiaddr"`
-	Epoch         int             `json:"epoch"`
-	MetaData      *eth.MetaDataV1 `json:"metadata"`
-	ClientVersion string          `json:"client_version"`
-	CrawlerID     string          `json:"crawler_id"`
-	CrawlerLoc    string          `json:"crawler_location"`
-	Timestamp     int64           `json:"timestamp"` // Timestamp in UNIX milliseconds
+	ENR               string          `json:"enr"`
+	ID                string          `json:"id"`
+	Multiaddr         string          `json:"multiaddr"`
+	Epoch             int             `json:"epoch"`
+	MetaData          *eth.MetaDataV1 `json:"metadata"`
+	SubscribedSubnets []int64         `json:"subscribed_subnets"`
+	ClientVersion     string          `json:"client_version"`
+	CrawlerID         string          `json:"crawler_id"`
+	CrawlerLoc        string          `json:"crawler_location"`
+	Timestamp         int64           `json:"timestamp"` // Timestamp in UNIX milliseconds
 }
 
 func (n *Node) sendMetadataEvent(ctx context.Context, event *MetadataReceivedEvent) {

@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/chainbound/valtrack/config"
@@ -11,6 +13,8 @@ import (
 	gcrypto "github.com/ethereum/go-ethereum/crypto"
 	"github.com/libp2p/go-libp2p"
 	mplex "github.com/libp2p/go-libp2p-mplex"
+	pubsub "github.com/libp2p/go-libp2p-pubsub"
+	pb "github.com/libp2p/go-libp2p-pubsub/pb"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/p2p/security/noise"
@@ -38,6 +42,7 @@ type PeerBackoff struct {
 // Node represents a node in the network with a host and configuration.
 type Node struct {
 	host              host.Host
+	gs                *pubsub.PubSub
 	cfg               *config.NodeConfig
 	peerstore         *Peerstore
 	reqResp           *ReqResp
@@ -159,6 +164,33 @@ func NewNode(cfg *config.NodeConfig) (*Node, error) {
 	}, nil
 }
 
+func (n *Node) CanSubscribe(topic string) bool {
+	return true
+}
+
+func (n *Node) FilterIncomingSubscriptions(pid peer.ID, opts []*pb.RPC_SubOpts) ([]*pb.RPC_SubOpts, error) {
+	var attnets []int64
+	for _, opt := range opts {
+		topic := opt.GetTopicid()
+		if strings.Contains(topic, "beacon_attestation") {
+			// "/eth2/6a95a1a9/beacon_attestation_61/ssz_snappy"
+			subnetIndex := strings.Split(strings.Split(topic, "/")[3], "_")[2]
+
+			if idx, err := strconv.Atoi(subnetIndex); err == nil {
+				attnets = append(attnets, int64(idx))
+			}
+
+		}
+	}
+
+	if len(attnets) > 0 {
+		n.log.Info().Str("peer", pid.String()).Any("attnets", attnets).Msg("Filtering incoming subscriptions")
+		n.peerstore.AddSubscribedSubnets(pid, attnets...)
+	}
+
+	return nil, nil
+}
+
 // Start runs the operational routines of the node, such as network services and handling connections.
 func (n *Node) Start(ctx context.Context) error {
 	status := &eth.Status{
@@ -194,6 +226,29 @@ func (n *Node) Start(ctx context.Context) error {
 	// Start the timer function to attempt reconnections every 30 seconds
 	go n.startReconnectionTimer()
 	n.startReconnectListener()
+
+	psOpts := []pubsub.Option{
+		pubsub.WithMessageSignaturePolicy(pubsub.StrictNoSign),
+		pubsub.WithNoAuthor(),
+		// pubsub.WithMessageIdFn(func(pmsg *pubsubpb.Message) string {
+		// 	return MsgID(s.genesisValidatorsRoot, pmsg)
+		// }),
+		pubsub.WithSubscriptionFilter(n),
+		// pubsub.WithPeerOutboundQueueSize(int(s.cfg.QueueSize)),
+		// pubsub.WithMaxMessageSize(int(params.BeaconConfig().GossipMaxSize)),
+		// pubsub.WithValidateQueueSize(int(s.cfg.QueueSize)),
+		// pubsub.WithPeerScore(peerScoringParams()),
+		// pubsub.WithPeerScoreInspect(s.peerInspector, time.Minute),
+		// pubsub.WithGossipSubParams(pubsubGossipParam()),
+		// pubsub.WithRawTracer(gossipTracer{host: s.host}),
+	}
+
+	gs, err := pubsub.NewGossipSub(ctx, n.host, psOpts...)
+	if err != nil {
+		return errors.Wrap(err, "failed to create GossipSub")
+	}
+
+	n.gs = gs
 
 	<-ctx.Done()
 	n.log.Info().Msg("Shutting down node services")

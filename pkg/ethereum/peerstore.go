@@ -32,9 +32,10 @@ type PeerInfo struct {
 	lastSeen   time.Time
 	remoteAddr multiaddr.Multiaddr
 
-	status        *eth.Status
-	metadata      *eth.MetaDataV1 // Only interested in metadataV1
-	clientVersion string
+	status            *eth.Status
+	metadata          *eth.MetaDataV1 // Only interested in metadataV1
+	subscribedSubnets []int64
+	clientVersion     string
 
 	state          ConnectionState
 	lastErr        error
@@ -49,7 +50,8 @@ func (p *PeerInfo) IntoMetadataEvent() *MetadataReceivedEvent {
 		ClientVersion: p.clientVersion,
 		MetaData:      p.metadata,
 		// `epoch = slot // SLOTS_PER_EPOCH`
-		Epoch: int(p.status.HeadSlot) / 32,
+		Epoch:             int(p.status.HeadSlot) / 32,
+		SubscribedSubnets: p.subscribedSubnets,
 		// These should be set later
 		CrawlerID:  "",
 		CrawlerLoc: "",
@@ -141,7 +143,6 @@ func (p *Peerstore) IsBackedOff(id peer.ID) bool {
 	}
 
 	return false
-
 }
 
 // Reset MUST be called every time we've had a succesful handshake & metadata exchange with a peer.
@@ -158,10 +159,22 @@ func (p *Peerstore) Reset(id peer.ID) {
 		// Remove status!
 		info.status = nil
 		info.metadata = nil
+		info.subscribedSubnets = []int64{}
 	} else {
 		panic("peerstore: ResetBackoff: peer not found")
 	}
+}
 
+func (p *Peerstore) AddSubscribedSubnets(id peer.ID, subnet ...int64) {
+	p.Lock()
+	defer p.Unlock()
+
+	if info, ok := p.peers[id]; ok {
+		info.subscribedSubnets = append(info.subscribedSubnets, subnet...)
+		info.lastSeen = time.Now()
+	} else {
+		panic("peerstore: AddSubscribedSubnet: peer not found")
+	}
 }
 
 func (p *Peerstore) SetStatus(id peer.ID, status *eth.Status) {
