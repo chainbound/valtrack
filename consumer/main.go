@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"flag"
@@ -54,16 +55,17 @@ type ParquetMetadataReceivedEvent struct {
 }
 
 type ParquetValidatorEvent struct {
-	ENR           string         `parquet:"name=enr, type=BYTE_ARRAY, convertedtype=UTF8"`
-	ID            string         `parquet:"name=id, type=BYTE_ARRAY, convertedtype=UTF8"`
-	Multiaddr     string         `parquet:"name=multiaddr, type=BYTE_ARRAY, convertedtype=UTF8"`
-	Epoch         int            `parquet:"name=epoch, type=INT32"`
-	MetaData      SimpleMetaData `parquet:"name=metadata, type=BYTE_ARRAY, convertedtype=UTF8"`
-	Subnets       []int64        `parquet:"name=subnets, type=LIST, valuetype=INT64"`
-	ClientVersion string         `parquet:"name=client_version, type=BYTE_ARRAY, convertedtype=UTF8"`
-	CrawlerID     string         `parquet:"name=crawler_id, type=BYTE_ARRAY, convertedtype=UTF8"`
-	CrawlerLoc    string         `parquet:"name=crawler_location, type=BYTE_ARRAY, convertedtype=UTF8"`
-	Timestamp     int64          `parquet:"name=timestamp, type=INT64"`
+	ENR               string         `parquet:"name=enr, type=BYTE_ARRAY, convertedtype=UTF8"`
+	ID                string         `parquet:"name=id, type=BYTE_ARRAY, convertedtype=UTF8"`
+	Multiaddr         string         `parquet:"name=multiaddr, type=BYTE_ARRAY, convertedtype=UTF8"`
+	Epoch             int            `parquet:"name=epoch, type=INT32"`
+	MetaData          SimpleMetaData `parquet:"name=metadata, type=BYTE_ARRAY, convertedtype=UTF8"`
+	LongLivedSubnets  []int64        `parquet:"name=long_lived_subnets, type=LIST, valuetype=INT64"`
+	SubscribedSubnets []int64        `parquet:"name=subscribed_subnets, type=LIST, valuetype=INT64"`
+	ClientVersion     string         `parquet:"name=client_version, type=BYTE_ARRAY, convertedtype=UTF8"`
+	CrawlerID         string         `parquet:"name=crawler_id, type=BYTE_ARRAY, convertedtype=UTF8"`
+	CrawlerLoc        string         `parquet:"name=crawler_location, type=BYTE_ARRAY, convertedtype=UTF8"`
+	Timestamp         int64          `parquet:"name=timestamp, type=INT64"`
 }
 
 type SimpleMetaData struct {
@@ -91,19 +93,19 @@ func main() {
 		log.Fatal().Err(err).Msg("Error creating JetStream context")
 	}
 
-	w_peer, err := local.NewLocalFileWriter("peer_discovered.parquet")
+	w_peer, err := local.NewLocalFileWriter("discovery_events.parquet")
 	if err != nil {
 		log.Fatal().Err(err).Msg("Error creating peer_discovered parquet file")
 	}
 	defer w_peer.Close()
 
-	w_metadata, err := local.NewLocalFileWriter("metadata_received.parquet")
+	w_metadata, err := local.NewLocalFileWriter("metadata_events.parquet")
 	if err != nil {
 		log.Fatal().Err(err).Msg("Error creating metadata_received parquet file")
 	}
 	defer w_metadata.Close()
 
-	w_validator, err := local.NewLocalFileWriter("validator.parquet")
+	w_validator, err := local.NewLocalFileWriter("validator_metadata_events.parquet")
 	if err != nil {
 		log.Fatal().Err(err).Msg("Error creating validator parquet file")
 	}
@@ -220,6 +222,41 @@ func handleMessage(cons Consumer, msg jetstream.Msg) {
 	}
 }
 
+// parseSubscribedSubnets parses the 8 byte bitvector of subscribed subnets into the subnet indexes
+func parseSubscribedSubnets(subnets []byte) []int64 {
+	var subscribedSubnets []int64
+
+	subnetsUint64 := binary.LittleEndian.Uint64(subnets)
+
+	for i := 0; i < 64; i++ {
+		if (subnetsUint64 & (1 << uint(i))) != 0 {
+			subscribedSubnets = append(subscribedSubnets, int64(i))
+		}
+	}
+
+	return subscribedSubnets
+}
+
+func extractShortLivedSubnets(subscribed []int64, longLived []int64) []int64 {
+	var shortLived []int64
+	for i := 0; i < 64; i++ {
+		if contains(subscribed, int64(i)) && !contains(longLived, int64(i)) {
+			shortLived = append(shortLived, int64(i))
+		}
+	}
+
+	return shortLived
+}
+
+func contains[T comparable](slice []T, item T) bool {
+	for _, i := range slice {
+		if i == item {
+			return true
+		}
+	}
+	return false
+}
+
 func storeValidatorEvent(pw *writer.ParquetWriter, event ethereum.MetadataReceivedEvent, log zerolog.Logger) {
 	enode, err := enode.Parse(enode.ValidSchemes, event.ENR)
 	if err != nil {
@@ -227,12 +264,22 @@ func storeValidatorEvent(pw *writer.ParquetWriter, event ethereum.MetadataReceiv
 		return
 	}
 
+	// 8 byte bitvector
+	subscribedSubnets := parseSubscribedSubnets(event.MetaData.Attnets)
+
 	data, err := p2p.ComputeSubscribedSubnets(enode.ID(), primitives.Epoch(event.Epoch))
-	subnetData := convertUint64ToInt64(data)
+	longLived := convertUint64ToInt64(data)
 	if err != nil {
 		log.Err(err).Msg("Error computing subscribed subnets")
 	}
-	log.Info().Any("subnets", data).Msg("subnets")
+
+	log.Info().Any("long_lived_subnets", longLived).Any("subscribed_subnets", subscribedSubnets).Msg("Checking for validator")
+
+	if len(extractShortLivedSubnets(subscribedSubnets, longLived)) == 0 {
+		// If the subscribed subnets and the longLived subnets are the same,
+		// then there's probably no validator
+		return
+	}
 
 	simpleMetaData := SimpleMetaData{
 		SeqNumber: int64(event.MetaData.SeqNumber),
@@ -241,16 +288,17 @@ func storeValidatorEvent(pw *writer.ParquetWriter, event ethereum.MetadataReceiv
 	}
 
 	parquetEvent := ParquetValidatorEvent{
-		ENR:           event.ENR,
-		ID:            event.ID,
-		Multiaddr:     event.Multiaddr,
-		Epoch:         int(event.Epoch),
-		MetaData:      simpleMetaData,
-		ClientVersion: event.ClientVersion,
-		CrawlerID:     event.CrawlerID,
-		CrawlerLoc:    event.CrawlerLoc,
-		Timestamp:     event.Timestamp,
-		Subnets:       subnetData,
+		ENR:               event.ENR,
+		ID:                event.ID,
+		Multiaddr:         event.Multiaddr,
+		Epoch:             int(event.Epoch),
+		MetaData:          simpleMetaData,
+		ClientVersion:     event.ClientVersion,
+		CrawlerID:         event.CrawlerID,
+		CrawlerLoc:        event.CrawlerLoc,
+		Timestamp:         event.Timestamp,
+		LongLivedSubnets:  longLived,
+		SubscribedSubnets: subscribedSubnets,
 	}
 
 	if err := pw.Write(parquetEvent); err != nil {
