@@ -46,9 +46,6 @@ func (n *Node) Connected(net network.Network, c network.Conn) {
 
 func (n *Node) Disconnected(net network.Network, c network.Conn) {
 	pid := c.RemotePeer()
-	// Mark the peer as succesfully connected, which will reset the backoff
-	// and error to nil.
-	n.peerstore.Reset(pid)
 
 	n.log.Info().Str("peer", pid.String()).Msg("Peer disconnected")
 }
@@ -63,6 +60,10 @@ func (n *Node) handleOutboundConnection(pid peer.ID) {
 
 	// Cleanup function
 	defer func() {
+		// Mark the peer as succesfully connected, which will reset the backoff
+		// and error to nil.
+		n.peerstore.Reset(pid)
+
 		// Don't do anything if we're already disconnected
 		if n.host.Network().Connectedness(pid) != network.Connected {
 			return
@@ -122,6 +123,10 @@ func (n *Node) handleInboundConnection(pid peer.ID) {
 
 	// Cleanup function
 	defer func() {
+		// Mark the peer as succesfully connected, which will reset the backoff
+		// and error to nil.
+		n.peerstore.Reset(pid)
+
 		if n.host.Network().Connectedness(pid) != network.Connected {
 			return
 		}
