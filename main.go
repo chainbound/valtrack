@@ -7,10 +7,11 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/chainbound/valtrack/discovery"
 	"github.com/rs/zerolog"
-
 	"github.com/urfave/cli/v2"
+
+	"github.com/chainbound/valtrack/consumer"
+	"github.com/chainbound/valtrack/discovery"
 )
 
 type Config struct {
@@ -42,7 +43,7 @@ func main() {
 					level, _ := zerolog.ParseLevel(cfg.logLevel)
 					zerolog.SetGlobalLevel(level)
 
-					// TODO: implement consumer logic
+					consumer.RunConsumer()
 					return nil
 				},
 			},

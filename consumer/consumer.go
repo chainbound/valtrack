@@ -1,4 +1,4 @@
-package main
+package consumer
 
 import (
 	"context"
@@ -74,7 +74,7 @@ type SimpleMetaData struct {
 	Syncnets  string `parquet:"name=syncnets, type=BYTE_ARRAY, convertedtype=UTF8"`
 }
 
-func main() {
+func RunConsumer() {
 	log := log.NewLogger("consumer")
 
 	var natsURL string
