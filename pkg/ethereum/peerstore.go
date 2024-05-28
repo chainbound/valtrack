@@ -4,6 +4,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ethereum/go-ethereum/p2p/enode"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/multiformats/go-multiaddr"
 
@@ -27,6 +28,7 @@ const EPOCH_DURATION = 12 * 32 * time.Second
 // PeerInfo contains information about a peer
 type PeerInfo struct {
 	id         peer.ID
+	enode      enode.Node
 	lastSeen   time.Time
 	remoteAddr multiaddr.Multiaddr
 
@@ -41,6 +43,7 @@ type PeerInfo struct {
 
 func (p *PeerInfo) IntoMetadataEvent() *MetadataReceivedEvent {
 	return &MetadataReceivedEvent{
+		ENR:           p.enode.String(),
 		ID:            p.id.String(),
 		Multiaddr:     p.remoteAddr.String(),
 		ClientVersion: p.clientVersion,
@@ -77,11 +80,12 @@ func (p *Peerstore) Get(id peer.ID) *PeerInfo {
 }
 
 // Insert inserts a peer into the peerstore in the `NotConnected` state.
-func (p *Peerstore) Insert(id peer.ID, addr multiaddr.Multiaddr) {
+func (p *Peerstore) Insert(id peer.ID, addr multiaddr.Multiaddr, enode enode.Node) {
 	p.Lock()
 	defer p.Unlock()
 
 	p.peers[id] = &PeerInfo{
+		enode:      enode,
 		id:         id,
 		remoteAddr: addr,
 		lastSeen:   time.Now(),

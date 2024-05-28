@@ -18,8 +18,11 @@ var _ network.Notifiee = (*Node)(nil)
 func (n *Node) Connected(net network.Network, c network.Conn) {
 	pid := c.RemotePeer()
 
+	info := n.disc.seenNodes[pid]
+
 	// Insert into the peerstore
-	n.peerstore.Insert(pid, c.RemoteMultiaddr())
+	n.peerstore.Insert(pid, c.RemoteMultiaddr(), info.Node)
+
 	n.peerstore.SetState(pid, Connecting)
 
 	n.log.Info().

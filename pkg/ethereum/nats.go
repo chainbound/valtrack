@@ -20,6 +20,7 @@ type PeerDiscoveredEvent struct {
 }
 
 type MetadataReceivedEvent struct {
+	ENR           string          `json:"enr"`
 	ID            string          `json:"id"`
 	Multiaddr     string          `json:"multiaddr"`
 	Epoch         int             `json:"epoch"`

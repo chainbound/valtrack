@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -41,32 +42,34 @@ type ParquetPeerDiscoveredEvent struct {
 }
 
 type ParquetMetadataReceivedEvent struct {
-	ID        string `parquet:"name=id, type=BYTE_ARRAY, convertedtype=UTF8"`
-	Multiaddr string `parquet:"name=multiaddr, type=BYTE_ARRAY, convertedtype=UTF8"`
-	Epoch     int    `parquet:"name=epoch, type=INT32"`
-	// MetaData      SimpleMetaData `parquet:"name=metadata, type=BYTE_ARRAY, convertedtype=UTF8"`
-	ClientVersion string `parquet:"name=client_version, type=BYTE_ARRAY, convertedtype=UTF8"`
-	CrawlerID     string `parquet:"name=crawler_id, type=BYTE_ARRAY, convertedtype=UTF8"`
-	CrawlerLoc    string `parquet:"name=crawler_location, type=BYTE_ARRAY, convertedtype=UTF8"`
-	Timestamp     int64  `parquet:"name=timestamp, type=INT64"`
+	ENR           string         `parquet:"name=enr, type=BYTE_ARRAY, convertedtype=UTF8"`
+	ID            string         `parquet:"name=id, type=BYTE_ARRAY, convertedtype=UTF8"`
+	Multiaddr     string         `parquet:"name=multiaddr, type=BYTE_ARRAY, convertedtype=UTF8"`
+	Epoch         int            `parquet:"name=epoch, type=INT32"`
+	MetaData      SimpleMetaData `parquet:"name=metadata, type=BYTE_ARRAY, convertedtype=UTF8"`
+	ClientVersion string         `parquet:"name=client_version, type=BYTE_ARRAY, convertedtype=UTF8"`
+	CrawlerID     string         `parquet:"name=crawler_id, type=BYTE_ARRAY, convertedtype=UTF8"`
+	CrawlerLoc    string         `parquet:"name=crawler_location, type=BYTE_ARRAY, convertedtype=UTF8"`
+	Timestamp     int64          `parquet:"name=timestamp, type=INT64"`
 }
 
 type ParquetValidatorEvent struct {
-	ID        string `parquet:"name=id, type=BYTE_ARRAY, convertedtype=UTF8"`
-	Multiaddr string `parquet:"name=multiaddr, type=BYTE_ARRAY, convertedtype=UTF8"`
-	Epoch     int    `parquet:"name=epoch, type=INT32"`
-	// MetaData      SimpleMetaData `parquet:"name=metadata, type=BYTE_ARRAY, convertedtype=UTF8"`
-	ClientVersion string  `parquet:"name=client_version, type=BYTE_ARRAY, convertedtype=UTF8"`
-	CrawlerID     string  `parquet:"name=crawler_id, type=BYTE_ARRAY, convertedtype=UTF8"`
-	CrawlerLoc    string  `parquet:"name=crawler_location, type=BYTE_ARRAY, convertedtype=UTF8"`
-	Timestamp     int64   `parquet:"name=timestamp, type=INT64"`
-	Subnets       []int64 `parquet:"name=subnets type=INT64"`
+	ENR           string         `parquet:"name=enr, type=BYTE_ARRAY, convertedtype=UTF8"`
+	ID            string         `parquet:"name=id, type=BYTE_ARRAY, convertedtype=UTF8"`
+	Multiaddr     string         `parquet:"name=multiaddr, type=BYTE_ARRAY, convertedtype=UTF8"`
+	Epoch         int            `parquet:"name=epoch, type=INT32"`
+	MetaData      SimpleMetaData `parquet:"name=metadata, type=BYTE_ARRAY, convertedtype=UTF8"`
+	Subnets       []int64        `parquet:"name=subnets, type=LIST, valuetype=INT64"`
+	ClientVersion string         `parquet:"name=client_version, type=BYTE_ARRAY, convertedtype=UTF8"`
+	CrawlerID     string         `parquet:"name=crawler_id, type=BYTE_ARRAY, convertedtype=UTF8"`
+	CrawlerLoc    string         `parquet:"name=crawler_location, type=BYTE_ARRAY, convertedtype=UTF8"`
+	Timestamp     int64          `parquet:"name=timestamp, type=INT64"`
 }
 
 type SimpleMetaData struct {
-	SeqNumber uint64
-	Attnets   string
-	Syncnets  string
+	SeqNumber int64  `parquet:"name=seq_number, type=INT64"`
+	Attnets   string `parquet:"name=attnets, type=BYTE_ARRAY, convertedtype=UTF8"`
+	Syncnets  string `parquet:"name=syncnets, type=BYTE_ARRAY, convertedtype=UTF8"`
 }
 
 func main() {
@@ -129,7 +132,7 @@ func main() {
 		}
 	}()
 
-	validatorWriter, err := writer.NewParquetWriter(w_validator, new(ParquetMetadataReceivedEvent), 4)
+	validatorWriter, err := writer.NewParquetWriter(w_validator, new(ParquetValidatorEvent), 4)
 	if err != nil {
 		log.Fatal().Err(err).Msg("Error creating Validator Parquet writer")
 	}
@@ -218,20 +221,31 @@ func handleMessage(cons Consumer, msg jetstream.Msg) {
 }
 
 func storeValidatorEvent(pw *writer.ParquetWriter, event ethereum.MetadataReceivedEvent, log zerolog.Logger) {
-	pid := enode.ID{}
-	copy(pid[:], event.ID)
-	data, err := p2p.ComputeSubscribedSubnets(pid, primitives.Epoch(event.Epoch))
+	enode, err := enode.Parse(enode.ValidSchemes, event.ENR)
+	if err != nil {
+		log.Err(err).Str("enr", event.ENR).Msg("Error parsing ENR")
+		return
+	}
+
+	data, err := p2p.ComputeSubscribedSubnets(enode.ID(), primitives.Epoch(event.Epoch))
 	subnetData := convertUint64ToInt64(data)
 	if err != nil {
 		log.Err(err).Msg("Error computing subscribed subnets")
 	}
 	log.Info().Any("subnets", data).Msg("subnets")
 
+	simpleMetaData := SimpleMetaData{
+		SeqNumber: int64(event.MetaData.SeqNumber),
+		Attnets:   hex.EncodeToString(event.MetaData.Attnets),
+		Syncnets:  hex.EncodeToString(event.MetaData.Syncnets),
+	}
+
 	parquetEvent := ParquetValidatorEvent{
-		ID:        event.ID,
-		Multiaddr: event.Multiaddr,
-		Epoch:     int(event.Epoch),
-		// MetaData:      simpleMetaData,
+		ENR:           event.ENR,
+		ID:            event.ID,
+		Multiaddr:     event.Multiaddr,
+		Epoch:         int(event.Epoch),
+		MetaData:      simpleMetaData,
 		ClientVersion: event.ClientVersion,
 		CrawlerID:     event.CrawlerID,
 		CrawlerLoc:    event.CrawlerLoc,
@@ -265,17 +279,17 @@ func storePeerDiscoveredEvent(pw *writer.ParquetWriter, event ethereum.PeerDisco
 }
 
 func storeMetadataReceivedEvent(pw *writer.ParquetWriter, event ethereum.MetadataReceivedEvent, log zerolog.Logger) {
-	// simpleMetaData := SimpleMetaData{
-	// 	SeqNumber: event.MetaData.SeqNumber,
-	// 	Attnets:   hex.EncodeToString(event.MetaData.Attnets),
-	// 	Syncnets:  hex.EncodeToString(event.MetaData.Syncnets),
-	// }
+	simpleMetaData := SimpleMetaData{
+		SeqNumber: int64(event.MetaData.SeqNumber),
+		Attnets:   hex.EncodeToString(event.MetaData.Attnets),
+		Syncnets:  hex.EncodeToString(event.MetaData.Syncnets),
+	}
 
 	parquetEvent := ParquetMetadataReceivedEvent{
-		ID:        event.ID,
-		Multiaddr: event.Multiaddr,
-		Epoch:     int(event.Epoch),
-		// MetaData:      simpleMetaData,
+		ID:            event.ID,
+		Multiaddr:     event.Multiaddr,
+		Epoch:         int(event.Epoch),
+		MetaData:      simpleMetaData,
 		ClientVersion: event.ClientVersion,
 		CrawlerID:     event.CrawlerID,
 		CrawlerLoc:    event.CrawlerLoc,
