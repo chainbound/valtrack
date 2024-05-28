@@ -184,7 +184,7 @@ func (n *Node) FilterIncomingSubscriptions(pid peer.ID, opts []*pb.RPC_SubOpts) 
 	}
 
 	if len(attnets) > 0 {
-		n.log.Info().Str("peer", pid.String()).Any("attnets", attnets).Msg("Filtering incoming subscriptions")
+		n.log.Debug().Str("peer", pid.String()).Any("attnets", attnets).Msg("Filtering incoming subscriptions")
 		n.peerstore.AddSubscribedSubnets(pid, attnets...)
 	}
 
