@@ -13,11 +13,14 @@ git clone git@github.com:chainbound/valtrack.git
 ```
 
 ### 2. Install Dependencies and Build
-
+Valtrack:
 ```shell
 go mod download
 go build
 ```
+
+NATS:
+- https://docs.nats.io/running-a-nats-service/introduction/installation
 
 ### 3. Run the Application
 Valtrack consists of 3 main components: the **sentry**, the **consumer** and a NATS JetStream server. The sentry is responsible for discovering and tracking Ethereum validators, while the consumer consumes the data published by the sentry, processed it and stores it in a database (Parquet files for now). Read more under [Architecture](#architecture).
