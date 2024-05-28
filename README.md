@@ -40,6 +40,7 @@ COMMANDS:
 
 GLOBAL OPTIONS:
    --log-level value, -l value  log level (default: "info")
+   --nats value, -n value       natsJS server url
    --help, -h                   show help
 ```
 
@@ -51,6 +52,8 @@ GLOBAL OPTIONS:
 
 The Beacon Sentry is a service that crawls the Ethereum DHT network and discovers nodes. The discovered nodes are then tried to connect and perform successful handshake with them. Successful handshakes allows us to get the peer's status and metadata.
 
+The sentry data is published to NATS server by Jetstreams, provided NATS url is provided as argument. If not provided, it saves the entries in log files.
+
 To run the Beacon Sentry:
 
 ```shell
@@ -59,7 +62,7 @@ To run the Beacon Sentry:
 
 ### Consumer
 
-Consumer is a service which consumes the sentry data from the NATS Jetstream server and stores it in parquet file (database soon). The sentry data is published by the Beacon Sentry.
+Consumer is a service which consumes the sentry data from the NATS Jetstream server and stores it in parquet file (database soon).
 
 To run the consumer:
 
