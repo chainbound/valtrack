@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"sync"
 	"time"
 
 	"github.com/chainbound/valtrack/config"
@@ -40,16 +39,14 @@ type PeerBackoff struct {
 type Node struct {
 	host              host.Host
 	cfg               *config.NodeConfig
+	peerstore         *Peerstore
 	reqResp           *ReqResp
 	disc              *DiscoveryV5
 	js                jetstream.JetStream
 	log               zerolog.Logger
 	fileLogger        *os.File
-	backoffCache      map[peer.ID]*PeerBackoff
-	metadataCache     map[peer.ID]*PeerMetadata
-	cacheMutex        sync.RWMutex
 	metadataEventChan chan *MetadataReceivedEvent
-	reconnectChan     chan peer.ID
+	reconnectChan     chan peer.AddrInfo
 }
 
 // NewNode initializes a new Node using the provided configuration and options.
@@ -66,6 +63,8 @@ func NewNode(cfg *config.NodeConfig) (*Node, error) {
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to generate discv5 key")
 	}
+
+	peerstore := NewPeerstore(30 * time.Second)
 
 	// TODO: read config from node config
 	conf := config.DefaultDiscConfig
@@ -108,7 +107,7 @@ func NewNode(cfg *config.NodeConfig) (*Node, error) {
 	}
 
 	// Initialize ReqResp
-	reqResp, err := NewReqResp(h, reqRespCfg)
+	reqResp, err := NewReqResp(h, peerstore, reqRespCfg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create reqresp: %w", err)
 	}
@@ -154,10 +153,9 @@ func NewNode(cfg *config.NodeConfig) (*Node, error) {
 		js:                js,
 		log:               log,
 		fileLogger:        file,
-		backoffCache:      make(map[peer.ID]*PeerBackoff),
-		metadataCache:     make(map[peer.ID]*PeerMetadata),
+		peerstore:         peerstore,
 		metadataEventChan: make(chan *MetadataReceivedEvent, 100),
-		reconnectChan:     make(chan peer.ID, 100),
+		reconnectChan:     make(chan peer.AddrInfo, 100),
 	}, nil
 }
 
@@ -225,127 +223,33 @@ func (n *Node) startReconnectionTimer() {
 	defer ticker.Stop()
 
 	for range ticker.C {
-		n.reconnectPeers()
-	}
-}
+		toReconnect := n.peerstore.PeersToReconnect()
 
-func (n *Node) reconnectPeers() {
-	n.cacheMutex.RLock()
-	defer n.cacheMutex.RUnlock()
-	n.log.Info().Msg("Attempting to reconnect to peers")
+		n.log.Info().Int("amount", len(toReconnect)).Msg("Attempting to reconnect expired peers")
 
-	for pid, backoff := range n.backoffCache {
-		// TODO: Depending on the error we might not want to reconnect
-		if time.Since(backoff.LastSeen) >= 30*time.Second && backoff.BackoffCounter < 10 {
-			n.log.Debug().Str("peer", pid.String()).Int("backoff_counter", backoff.BackoffCounter).Msg("Attempting to reconnect to peer")
+		for _, pid := range toReconnect {
 			n.reconnectChan <- pid
-		} else if backoff.BackoffCounter >= 10 {
-			n.log.Debug().Str("peer", pid.String()).Int("backoff_counter", backoff.BackoffCounter).Msg("Removing peer from backoff cache")
-			n.removeFromBackoffCache(pid)
 		}
 	}
 }
 
 func (n *Node) startReconnectListener() {
 	go func() {
-		for pid := range n.reconnectChan {
+		for info := range n.reconnectChan {
 			go func() {
-				n.cacheMutex.RLock()
-				backoff, exists := n.backoffCache[pid]
-				n.cacheMutex.RUnlock()
-
-				if !exists {
-					return
-				}
-
 				ctx, cancel := context.WithTimeout(context.Background(), n.cfg.DialTimeout)
-				err := n.host.Connect(ctx, backoff.AddrInfo)
+				err := n.host.Connect(ctx, info)
 				cancel()
 
 				if err != nil {
-					n.cacheMutex.Lock()
+					counter := n.peerstore.SetBackoff(info.ID, err)
 
-					backoff := n.backoffCache[pid]
-
-					backoff.LastSeen = time.Now()
-					backoff.BackoffCounter += 1
-
-					n.cacheMutex.Unlock()
-
-					n.log.Debug().Str("peer", pid.String()).Int("backoff_counter", backoff.BackoffCounter).Msg("Failed to reconnect to peer")
+					n.log.Debug().Str("peer", info.String()).Uint32("backoff_counter", counter).Msg("Failed to reconnect to peer")
 				} else {
-					n.log.Info().Str("peer", pid.String()).Msg("Successfully reconnected to peer")
+					n.log.Info().Str("peer", info.String()).Msg("Successfully reconnected to peer")
 				}
 
 			}()
 		}
 	}()
-}
-
-func (n *Node) addToBackoffCache(pid peer.ID, addrInfo peer.AddrInfo) {
-	n.cacheMutex.Lock()
-	defer n.cacheMutex.Unlock()
-
-	backoff, exists := n.backoffCache[pid]
-	if !exists {
-		backoff = &PeerBackoff{
-			BackoffCounter: 0,
-			AddrInfo:       addrInfo,
-		}
-	}
-
-	backoff.BackoffCounter++
-	backoff.LastSeen = time.Now()
-	n.backoffCache[pid] = backoff
-
-	if !exists {
-		n.log.Debug().Str("peer", pid.String()).Int("backoff_counter", backoff.BackoffCounter).Msg("Added peer to backoff cache")
-	} else {
-		n.log.Debug().Str("peer", pid.String()).Int("backoff_counter", backoff.BackoffCounter).Msg("Updated peer in backoff cache")
-	}
-}
-
-func (n *Node) removeFromBackoffCache(pid peer.ID) {
-	n.cacheMutex.Lock()
-	defer n.cacheMutex.Unlock()
-
-	delete(n.backoffCache, pid)
-	n.log.Debug().Str("peer", pid.String()).Msg("Removed peer from backoff cache")
-}
-
-// func (n *Node) getBackoffCounter(pid peer.ID) int {
-// 	n.cacheMutex.RLock()
-// 	defer n.cacheMutex.RUnlock()
-
-// 	backoff, exists := n.backoffCache[pid]
-// 	if !exists {
-// 		return 0
-// 	}
-
-// 	return backoff.BackoffCounter
-// }
-
-func (n *Node) addToMetadataCache(pid peer.ID, metadata *eth.MetaDataV1) {
-	// TODO: we seeem to run into a deadlock here. Ignore for now.
-	// n.removeFromBackoffCache(pid)
-
-	// NOTE: Peer ID will be unique, so no need to lock the cache
-	n.metadataCache[pid] = &PeerMetadata{
-		LastSeen: time.Now(),
-		Metadata: metadata,
-	}
-
-	n.log.Debug().Str("peer", pid.String()).Str("metadata", metadata.String()).Msg("Added peer to metadata cache")
-}
-
-func (n *Node) getMetadataFromCache(pid peer.ID) *PeerMetadata {
-	n.cacheMutex.RLock()
-	defer n.cacheMutex.RUnlock()
-
-	metadata, exists := n.metadataCache[pid]
-	if !exists {
-		return nil
-	}
-
-	return metadata
 }

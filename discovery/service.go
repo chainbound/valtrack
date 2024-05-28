@@ -28,10 +28,6 @@ func NewDiscovery() (*Discovery, error) {
 	}
 
 	privBytes = gcrypto.FromECDSA(key)
-	if len(privBytes) != secp256k1.PrivKeyBytesLen {
-		return nil, fmt.Errorf("expected secp256k1 data size to be %d", secp256k1.PrivKeyBytesLen)
-	}
-
 	privateKey := (*crypto.Secp256k1PrivateKey)(secp256k1.PrivKeyFromBytes(privBytes))
 
 	nodeConfig := &config.DefaultNodeConfig

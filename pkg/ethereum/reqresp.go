@@ -35,8 +35,9 @@ type ReqRespConfig struct {
 
 // ReqResp handles request-response operations for the node.
 type ReqResp struct {
-	host host.Host
-	cfg  *ReqRespConfig
+	host      host.Host
+	cfg       *ReqRespConfig
+	peerstore *Peerstore
 
 	metaData   *pb.MetaDataV1
 	metaDataMu sync.RWMutex
@@ -50,7 +51,7 @@ type ReqResp struct {
 
 type ContextStreamHandler func(context.Context, network.Stream) error
 
-func NewReqResp(h host.Host, cfg *ReqRespConfig) (*ReqResp, error) {
+func NewReqResp(h host.Host, peerstore *Peerstore, cfg *ReqRespConfig) (*ReqResp, error) {
 	if cfg == nil {
 		return nil, fmt.Errorf("req resp server config must not be nil")
 	}
@@ -69,6 +70,7 @@ func NewReqResp(h host.Host, cfg *ReqRespConfig) (*ReqResp, error) {
 	p := &ReqResp{
 		host:      h,
 		cfg:       cfg,
+		peerstore: peerstore,
 		metaData:  md,
 		statusLim: rate.NewLimiter(1, 5),
 		log:       log.NewLogger("reqresp"),
@@ -203,24 +205,21 @@ func (r *ReqResp) goodbyeHandler(ctx context.Context, stream network.Stream) err
 }
 
 func (r *ReqResp) statusHandler(ctx context.Context, stream network.Stream) error {
+	pid := stream.Conn().RemotePeer()
 	// First, read the incoming status request.
 	req := &pb.Status{}
 	if err := r.readRequest(ctx, stream, req); err != nil {
 		return fmt.Errorf("read status request: %w", err)
 	}
 
+	// Record their status
+	r.peerstore.SetStatus(pid, req)
+
 	// Fetch a copy of the local status to respond with.
 	resp := r.cpyStatus()
 	if resp == nil {
 		return fmt.Errorf("local status is nil")
 	}
-
-	// NOTE: Hermes - ask the delegate node for the latest status
-	// ask our delegate node for the latest status, using our known latest status
-	// this is important because blindly forwarding the request from a remote peer
-	// will lead to intermittent disconnects from the beacon node. The "trusted peer"
-	// setting doesn't seem to apply if we send, e.g., a status payload with
-	// a non-matching fork-digest or non-finalized root hash.
 
 	// Respond with the local status.
 	if err := r.writeResponse(ctx, stream, resp); err != nil {

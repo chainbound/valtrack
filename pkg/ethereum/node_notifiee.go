@@ -3,7 +3,7 @@ package ethereum
 import (
 	"bytes"
 	"context"
-	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -18,10 +18,18 @@ var _ network.Notifiee = (*Node)(nil)
 func (n *Node) Connected(net network.Network, c network.Conn) {
 	pid := c.RemotePeer()
 
+	info := n.disc.seenNodes[pid]
+
+	// Insert into the peerstore
+	n.peerstore.Insert(pid, c.RemoteMultiaddr(), info.Node)
+
+	n.peerstore.SetState(pid, Connecting)
+
 	n.log.Info().
 		Str("peer", pid.String()).
 		Str("dir", c.Stat().Direction.String()).
 		Int("total", len(n.host.Network().Peers())).
+		Int("peerstore_size", n.peerstore.Size()).
 		Msg("Connected Peer")
 
 	if c.Stat().Direction == network.DirOutbound {
@@ -32,11 +40,11 @@ func (n *Node) Connected(net network.Network, c network.Conn) {
 }
 
 func (n *Node) Disconnected(net network.Network, c network.Conn) {
-	if n.getMetadataFromCache(c.RemotePeer()) != nil {
-		n.log.Info().
-			Str("peer", c.RemotePeer().String()).
-			Msg("Disconnected from handshaked peer")
-	}
+	pid := c.RemotePeer()
+
+	// Mark peer as disconnected
+	n.peerstore.SetState(pid, NotConnected)
+	n.log.Info().Str("peer", pid.String()).Msg("Peer disconnected")
 }
 
 func (n *Node) Listen(net network.Network, maddr ma.Multiaddr) {}
@@ -53,6 +61,10 @@ func (n *Node) handleOutboundConnection(pid peer.ID) {
 		if n.host.Network().Connectedness(pid) != network.Connected {
 			return
 		}
+
+		// Mark the peer as succesfully connected, which will reset the backoff
+		// and error to nil.
+		n.peerstore.SetConnected(pid)
 
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
@@ -72,14 +84,31 @@ func (n *Node) handleOutboundConnection(pid peer.ID) {
 	}
 
 	addrInfo := peer.AddrInfo{ID: pid, Addrs: addrs}
-	if err := n.validatePeer(ctx, pid, addrInfo); err != nil {
+	if err := n.handshake(ctx, pid, addrInfo); err != nil {
 		n.log.Warn().Str("peer", pid.String()).Err(err).Msg("Handshake failed")
-		n.addToBackoffCache(pid, addrInfo)
 
-		// TODO: Should we remove peer?
-		// n.host.Peerstore().RemovePeer(pid)
+		// If there was any issue during the handshake, we didn't get to the metadata response.
+		// This means we should try again and mark the peer as backed off
+		n.peerstore.SetBackoff(pid, err)
+
 		return
 	}
+
+	// Save the client version
+	if v, err := n.host.Peerstore().Get(pid, "AgentVersion"); err == nil {
+		n.peerstore.SetClientVersion(pid, v.(string))
+	}
+
+	info := n.peerstore.Get(pid)
+	event := info.IntoMetadataEvent()
+
+	n.sendMetadataEvent(ctx, event)
+
+	json, _ := json.Marshal(event)
+
+	n.log.Info().Msgf("Succesful handshake: %s", string(json))
+
+	fmt.Fprintln(n.fileLogger, string(json))
 
 }
 
@@ -92,6 +121,10 @@ func (n *Node) handleInboundConnection(pid peer.ID) {
 			return
 		}
 
+		// Mark the peer as succesfully connected, which will reset the backoff
+		// and error to nil.
+		n.peerstore.SetConnected(pid)
+
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
 
@@ -103,11 +136,16 @@ func (n *Node) handleInboundConnection(pid peer.ID) {
 		n.host.Network().ClosePeer(pid)
 	}()
 
-	// Sleep 5 seconds to allow the handshake to complete
-	// TODO: this should be handled in the shared peerstore, i.e. saving the status message
-	time.Sleep(5 * time.Second)
+	// Wait max 5 seconds for the remote status to come in
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
 
-	ctx, cancel := context.WithTimeout(context.Background(), n.cfg.DialTimeout)
+	if err := n.waitForStatus(ctx, pid); err != nil {
+		n.log.Warn().Str("peer", pid.String()).Msg("Timed out waiting for status")
+		return
+	}
+
+	ctx, cancel = context.WithTimeout(context.Background(), n.cfg.DialTimeout)
 	defer cancel()
 
 	if n.host.Network().Connectedness(pid) != network.Connected {
@@ -121,32 +159,48 @@ func (n *Node) handleInboundConnection(pid peer.ID) {
 		return
 	}
 
-	addrs := n.host.Peerstore().Addrs(pid)
-	if len(addrs) == 0 {
-		n.log.Error().Str("peer", pid.String()).Msg("No addresses found on inbound peer")
-		return
+	n.peerstore.SetMetadata(pid, md)
+
+	// Save the client version
+	if v, err := n.host.Peerstore().Get(pid, "AgentVersion"); err == nil {
+		n.peerstore.SetClientVersion(pid, v.(string))
 	}
 
-	addrInfo := peer.AddrInfo{ID: pid, Addrs: addrs}
+	info := n.peerstore.Get(pid)
+	event := info.IntoMetadataEvent()
 
-	n.sendMetadataEvent(ctx, pid, addrInfo, md)
-	n.addToMetadataCache(pid, md)
+	n.sendMetadataEvent(ctx, event)
 
-	n.log.Info().
-		Str("peer", pid.String()).
-		Int("Seq", int(md.SeqNumber)).
-		Str("Attnets", hex.EncodeToString(md.Attnets)).
-		Msg("Performed successful handshake")
+	json, _ := json.Marshal(event)
 
-	fmt.Fprintf(n.fileLogger, "%s ID: %v, SeqNum: %v, Attnets: %s\n",
-		time.Now().Format(time.RFC3339), pid.String(), md.SeqNumber, hex.EncodeToString(md.Attnets))
+	n.log.Info().Msgf("Succesful handshake: %s", string(json))
+
+	fmt.Fprintln(n.fileLogger, string(json))
 }
 
-func (n *Node) validatePeer(ctx context.Context, pid peer.ID, addrInfo peer.AddrInfo) error {
+func (n *Node) waitForStatus(ctx context.Context, pid peer.ID) error {
+	for {
+		select {
+		case <-ctx.Done():
+			return errors.New("Timeout")
+		default:
+			if n.peerstore.Status(pid) != nil {
+				return nil
+			}
+
+			time.Sleep(1 * time.Second)
+		}
+	}
+}
+
+func (n *Node) handshake(ctx context.Context, pid peer.ID, addrInfo peer.AddrInfo) error {
 	st, err := n.reqResp.Status(ctx, pid)
 	if err != nil {
 		return errors.Wrap(err, "Failed to get status from peer")
 	}
+
+	// Set the status for this peer
+	n.peerstore.SetStatus(pid, st)
 
 	// If the status head slot is higher than the current, update it
 	if bytes.Equal(st.ForkDigest, n.cfg.ForkDigest[:]) {
@@ -164,17 +218,8 @@ func (n *Node) validatePeer(ctx context.Context, pid peer.ID, addrInfo peer.Addr
 		return errors.Wrap(err, "Failed to get metadata from peer")
 	}
 
-	n.sendMetadataEvent(ctx, pid, addrInfo, md)
-	n.addToMetadataCache(pid, md)
-
-	n.log.Info().
-		Str("peer", pid.String()).
-		Int("Seq", int(md.SeqNumber)).
-		Str("Attnets", hex.EncodeToString(md.Attnets)).
-		Msg("Performed successful handshake")
-
-	fmt.Fprintf(n.fileLogger, "%s ID: %v, SeqNum: %v, Attnets: %s\n",
-		time.Now().Format(time.RFC3339), pid.String(), md.SeqNumber, hex.EncodeToString(md.Attnets))
+	// Store the metadata for this peer
+	n.peerstore.SetMetadata(pid, md)
 
 	return nil
 }
