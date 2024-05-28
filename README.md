@@ -2,6 +2,8 @@
 
 > Valtrack is a suite of tools aimed at geo-locating and tracking Ethereum validators.
 
+Sample output in CSV: [validator_metadata_events_sample.csv](validator_metadata_events_sample.csv)
+
 ## Getting Started
 
 To get started with Valtrack, you need to clone the repository and install the dependencies.
