@@ -155,6 +155,7 @@ func (p *Peerstore) Reset(id peer.ID) {
 		info.backoffCounter = 0
 		info.lastSeen = time.Now()
 		info.lastErr = nil
+		info.state = NotConnected
 
 		// Remove status!
 		info.status = nil
