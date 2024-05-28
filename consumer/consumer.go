@@ -11,20 +11,13 @@ import (
 
 	"github.com/chainbound/valtrack/log"
 	"github.com/chainbound/valtrack/pkg/ethereum"
-	"github.com/ethereum/go-ethereum/p2p/enode"
 	"github.com/google/uuid"
-	"github.com/libp2p/go-libp2p-core/peer"
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
-	"github.com/pkg/errors"
 	"github.com/prysmaticlabs/go-bitfield"
-	"github.com/prysmaticlabs/prysm/v5/beacon-chain/p2p"
-	"github.com/prysmaticlabs/prysm/v5/consensus-types/primitives"
 	"github.com/rs/zerolog"
 	"github.com/xitongsys/parquet-go-source/local"
 	"github.com/xitongsys/parquet-go/writer"
-
-	gcrypto "github.com/ethereum/go-ethereum/crypto"
 )
 
 type Consumer struct {
@@ -253,53 +246,55 @@ func contains[T comparable](slice []T, item T) bool {
 	return false
 }
 
-func enodeFromPeerID(pid peer.ID) (enode.ID, error) {
-	pubkey, err := pid.ExtractPublicKey()
-	if err != nil {
-		return enode.ID{}, errors.Wrap(err, "error extracting public key from peer ID")
-	}
+// func enodeFromPeerID(pid peer.ID) (enode.ID, error) {
+// 	pubkey, err := pid.ExtractPublicKey()
+// 	if err != nil {
+// 		return enode.ID{}, errors.Wrap(err, "error extracting public key from peer ID")
+// 	}
 
-	// This encodes the public key in serialized, compressed secpk256k1 format
-	comp, err := pubkey.Raw()
-	if err != nil {
-		return enode.ID{}, errors.Wrap(err, "error converting pubkey to raw bytes")
-	}
+// 	// This encodes the public key in serialized, compressed secpk256k1 format
+// 	comp, err := pubkey.Raw()
+// 	if err != nil {
+// 		return enode.ID{}, errors.Wrap(err, "error converting pubkey to raw bytes")
+// 	}
 
-	decomp, err := gcrypto.DecompressPubkey(comp)
-	if err != nil {
-		return enode.ID{}, errors.Wrap(err, "error decompressing pubkey")
+// 	decomp, err := gcrypto.DecompressPubkey(comp)
+// 	if err != nil {
+// 		return enode.ID{}, errors.Wrap(err, "error decompressing pubkey")
 
-	}
+// 	}
 
-	return enode.PubkeyToIDV4(decomp), nil
-}
+// 	return enode.PubkeyToIDV4(decomp), nil
+// }
 
 func storeValidatorEvent(pw *writer.ParquetWriter, event ethereum.MetadataReceivedEvent, log zerolog.Logger) {
-	pid, err := peer.Decode(event.ID)
-	if err != nil {
-		log.Err(err).Str("peer", event.ID).Msg("Error converting peer ID")
-		return
-	}
+	// pid, err := peer.Decode(event.ID)
+	// if err != nil {
+	// 	log.Err(err).Str("peer", event.ID).Msg("Error converting peer ID")
+	// 	return
+	// }
 
-	nodeID, err := enodeFromPeerID(pid)
-	if err != nil {
-		log.Err(err).Str("peer", event.ID).Msg("Error converting peer ID to enode ID")
-		return
-	}
+	// nodeID, err := enodeFromPeerID(pid)
+	// if err != nil {
+	// 	log.Err(err).Str("peer", event.ID).Msg("Error converting peer ID to enode ID")
+	// 	return
+	// }
 
 	// Get the subscribed subnets from the metadata attnets
-	subscribedSubnets := indexesFromBitfield(event.MetaData.Attnets)
 
 	// Get the long-lived subnets from epoch & nodeID
-	data, err := p2p.ComputeSubscribedSubnets(nodeID, primitives.Epoch(event.Epoch))
-	longLived := convertUint64ToInt64(data)
-	if err != nil {
-		log.Err(err).Msg("Error computing subscribed subnets")
-	}
+	// data, err := p2p.ComputeSubscribedSubnets(nodeID, primitives.Epoch(event.Epoch))
+	// computedLongLived := convertUint64ToInt64(data)
+	// if err != nil {
+	// 	log.Err(err).Msg("Error computing subscribed subnets")
+	// }
 
-	log.Info().Any("long_lived_subnets", longLived).Any("subscribed_subnets", subscribedSubnets).Msg("Checking for validator")
+	// Extract the long lived subnets from the metadata
+	longLived := indexesFromBitfield(event.MetaData.Attnets)
 
-	if len(extractShortLivedSubnets(subscribedSubnets, longLived)) == 0 {
+	log.Info().Any("long_lived_subnets", longLived).Any("subscribed_subnets", event.SubscribedSubnets).Msg("Checking for validator")
+
+	if len(extractShortLivedSubnets(event.SubscribedSubnets, longLived)) == 0 {
 		// If the subscribed subnets and the longLived subnets are the same,
 		// then there's probably no validator
 		return
@@ -322,7 +317,7 @@ func storeValidatorEvent(pw *writer.ParquetWriter, event ethereum.MetadataReceiv
 		CrawlerLoc:        event.CrawlerLoc,
 		Timestamp:         event.Timestamp,
 		LongLivedSubnets:  longLived,
-		SubscribedSubnets: subscribedSubnets,
+		SubscribedSubnets: event.SubscribedSubnets,
 	}
 
 	if err := pw.Write(parquetEvent); err != nil {
@@ -375,10 +370,10 @@ func storeMetadataReceivedEvent(pw *writer.ParquetWriter, event ethereum.Metadat
 	}
 }
 
-func convertUint64ToInt64(uintSlice []uint64) []int64 {
-	intSlice := make([]int64, len(uintSlice))
-	for i, v := range uintSlice {
-		intSlice[i] = int64(v)
-	}
-	return intSlice
-}
+// func convertUint64ToInt64(uintSlice []uint64) []int64 {
+// 	intSlice := make([]int64, len(uintSlice))
+// 	for i, v := range uintSlice {
+// 		intSlice[i] = int64(v)
+// 	}
+// 	return intSlice
+// }

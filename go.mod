@@ -10,7 +10,6 @@ require (
 	github.com/ferranbt/fastssz v0.1.2
 	github.com/google/uuid v1.4.0
 	github.com/libp2p/go-libp2p v0.33.1
-	github.com/libp2p/go-libp2p-core v0.19.1
 	github.com/libp2p/go-libp2p-mplex v0.9.0
 	github.com/libp2p/go-libp2p-pubsub v0.10.1
 	github.com/libp2p/go-mplex v0.7.0
@@ -93,6 +92,7 @@ require (
 	github.com/libp2p/go-buffer-pool v0.1.0 // indirect
 	github.com/libp2p/go-flow-metrics v0.1.0 // indirect
 	github.com/libp2p/go-libp2p-asn-util v0.4.1 // indirect
+	github.com/libp2p/go-libp2p-core v0.19.1 // indirect
 	github.com/libp2p/go-msgio v0.3.0 // indirect
 	github.com/libp2p/go-nat v0.2.0 // indirect
 	github.com/libp2p/go-netroute v0.2.1 // indirect
