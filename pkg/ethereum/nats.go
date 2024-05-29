@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/ethereum/go-ethereum/p2p/enode"
@@ -37,9 +38,12 @@ type MetadataReceivedEvent struct {
 }
 
 func createNatsStream(url string) (js jetstream.JetStream, err error) {
-	// If empty URL, return nil and run without NATS
+	// If empty URL and empty env variable, return nil and run without NATS
 	if url == "" {
-		return nil, nil
+		if os.Getenv("NATS_URL") == "" {
+			return nil, nil
+		}
+		url = os.Getenv("NATS_URL")
 	}
 	// Initialize NATS JetStream
 	nc, err := nats.Connect(url)
