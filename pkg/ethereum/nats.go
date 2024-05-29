@@ -71,15 +71,7 @@ func (n *Node) sendMetadataEvent(ctx context.Context, event *MetadataReceivedEve
 	event.CrawlerID = getCrawlerMachineID()
 	event.CrawlerLoc = getCrawlerLocation()
 
-	n.log.Info().
-		Str("id", event.ID).
-		Str("multiaddr", event.Multiaddr).
-		Uint("epoch", event.Epoch).
-		Any("metadata", event.MetaData).
-		Str("client_version", event.ClientVersion).
-		Str("crawler_id", event.CrawlerID).
-		Str("crawler_location", event.CrawlerLoc).
-		Msg("metadata_received event")
+	n.log.Info().Any("metadata_event", event).Msg("metadata_received event")
 
 	if n.js == nil {
 		json, err := json.Marshal(event)
@@ -134,14 +126,7 @@ func (d *DiscoveryV5) sendPeerEvent(ctx context.Context, node *enode.Node, hInfo
 		Timestamp:  time.Now().UnixMilli(),
 	}
 
-	d.log.Info().
-		Str("enr", node.String()).
-		Str("id", hInfo.ID.String()).
-		Str("ip", hInfo.IP).
-		Int("port", hInfo.Port).
-		Str("crawler_id", peerEvent.CrawlerID).
-		Str("crawler_location", peerEvent.CrawlerLoc).
-		Msg("peer_discovered event")
+	d.log.Info().Any("peer_event", peerEvent).Msg("peer_discovered event")
 
 	if d.js == nil {
 		json, err := json.Marshal(peerEvent)

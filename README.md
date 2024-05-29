@@ -92,12 +92,6 @@ Peers are stored in a peerstore that will periodically (every epoch) run through
 
 TODO: The beacon sentry should later store estimations on the number of validators attached to a beacon node. It should then expose it over an API.
 
-To run the Beacon Sentry service (with NATS):
-
-```shell
-./valtrack --nats <NATS_URL> sentry
-```
-
 ### Consumer
 
 Consumer is a service which consumes the sentry data from the NATS Jetstream server and stores it in parquet file (database soon). Maintains 3 tables:
