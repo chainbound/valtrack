@@ -4,6 +4,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ethereum/go-ethereum/p2p/enode"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/multiformats/go-multiaddr"
 
@@ -27,12 +28,14 @@ const EPOCH_DURATION = 12 * 32 * time.Second
 // PeerInfo contains information about a peer
 type PeerInfo struct {
 	id         peer.ID
+	enode      enode.Node
 	lastSeen   time.Time
 	remoteAddr multiaddr.Multiaddr
 
-	status        *eth.Status
-	metadata      *eth.MetaDataV1 // Only interested in metadataV1
-	clientVersion string
+	status            *eth.Status
+	metadata          *eth.MetaDataV1 // Only interested in metadataV1
+	subscribedSubnets []int64
+	clientVersion     string
 
 	state          ConnectionState
 	lastErr        error
@@ -41,16 +44,18 @@ type PeerInfo struct {
 
 func (p *PeerInfo) IntoMetadataEvent() *MetadataReceivedEvent {
 	return &MetadataReceivedEvent{
+		ENR:           p.enode.String(),
 		ID:            p.id.String(),
 		Multiaddr:     p.remoteAddr.String(),
 		ClientVersion: p.clientVersion,
 		MetaData:      p.metadata,
 		// `epoch = slot // SLOTS_PER_EPOCH`
-		Epoch: uint(p.status.HeadSlot) / 32,
+		Epoch: int(p.status.HeadSlot) / 32,
 		// These should be set later
-		CrawlerID:  "",
-		CrawlerLoc: "",
-		Timestamp:  p.lastSeen.UnixMilli(),
+		CrawlerID:         "",
+		CrawlerLoc:        "",
+		SubscribedSubnets: p.subscribedSubnets,
+		Timestamp:         p.lastSeen.UnixMilli(),
 	}
 }
 
@@ -77,11 +82,12 @@ func (p *Peerstore) Get(id peer.ID) *PeerInfo {
 }
 
 // Insert inserts a peer into the peerstore in the `NotConnected` state.
-func (p *Peerstore) Insert(id peer.ID, addr multiaddr.Multiaddr) {
+func (p *Peerstore) Insert(id peer.ID, addr multiaddr.Multiaddr, enode enode.Node) {
 	p.Lock()
 	defer p.Unlock()
 
 	p.peers[id] = &PeerInfo{
+		enode:      enode,
 		id:         id,
 		remoteAddr: addr,
 		lastSeen:   time.Now(),
@@ -137,10 +143,11 @@ func (p *Peerstore) IsBackedOff(id peer.ID) bool {
 	}
 
 	return false
-
 }
 
-func (p *Peerstore) SetConnected(id peer.ID) {
+// Reset MUST be called every time we've had a succesful handshake & metadata exchange with a peer.
+// It will reset the backoff counter and the last error, and remove the last status & metadata
+func (p *Peerstore) Reset(id peer.ID) {
 	p.Lock()
 	defer p.Unlock()
 
@@ -148,10 +155,27 @@ func (p *Peerstore) SetConnected(id peer.ID) {
 		info.backoffCounter = 0
 		info.lastSeen = time.Now()
 		info.lastErr = nil
+		info.state = NotConnected
+
+		// Remove status!
+		info.status = nil
+		info.metadata = nil
+		info.subscribedSubnets = []int64{}
 	} else {
 		panic("peerstore: ResetBackoff: peer not found")
 	}
+}
 
+func (p *Peerstore) AddSubscribedSubnets(id peer.ID, subnet ...int64) {
+	p.Lock()
+	defer p.Unlock()
+
+	if info, ok := p.peers[id]; ok {
+		info.subscribedSubnets = append(info.subscribedSubnets, subnet...)
+		info.lastSeen = time.Now()
+	} else {
+		panic("peerstore: AddSubscribedSubnet: peer not found")
+	}
 }
 
 func (p *Peerstore) SetStatus(id peer.ID, status *eth.Status) {
