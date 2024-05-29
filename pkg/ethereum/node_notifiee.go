@@ -3,7 +3,6 @@ package ethereum
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"time"
 
 	"github.com/libp2p/go-libp2p/core/network"
@@ -17,8 +16,16 @@ var _ network.Notifiee = (*Node)(nil)
 func (n *Node) Connected(net network.Network, c network.Conn) {
 	pid := c.RemotePeer()
 
+	if n.peerstore.State(pid) != NotConnected {
+		// If we're already connecting, return
+		n.log.Debug().Str("peer", pid.String()).Msg("Already connecting to peer")
+		return
+	}
+
+	info := n.disc.seenNodes[pid]
+
 	// Insert into the peerstore
-	n.peerstore.Insert(pid, c.RemoteMultiaddr())
+	n.peerstore.Insert(pid, c.RemoteMultiaddr(), info.Node)
 	n.peerstore.SetState(pid, Connecting)
 
 	n.log.Info().
@@ -38,8 +45,6 @@ func (n *Node) Connected(net network.Network, c network.Conn) {
 func (n *Node) Disconnected(net network.Network, c network.Conn) {
 	pid := c.RemotePeer()
 
-	// Mark peer as disconnected
-	n.peerstore.SetState(pid, NotConnected)
 	n.log.Info().Str("peer", pid.String()).Msg("Peer disconnected")
 }
 
@@ -53,14 +58,14 @@ func (n *Node) handleOutboundConnection(pid peer.ID) {
 
 	// Cleanup function
 	defer func() {
+		// Mark the peer as succesfully connected, which will reset the backoff
+		// and error to nil.
+		n.peerstore.Reset(pid)
+
 		// Don't do anything if we're already disconnected
 		if n.host.Network().Connectedness(pid) != network.Connected {
 			return
 		}
-
-		// Mark the peer as succesfully connected, which will reset the backoff
-		// and error to nil.
-		n.peerstore.SetConnected(pid)
 
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
@@ -95,14 +100,13 @@ func (n *Node) handleOutboundConnection(pid peer.ID) {
 		n.peerstore.SetClientVersion(pid, v.(string))
 	}
 
+	// Sleep 2 seconds to allow for all subnet subscriptions to be processed
+	time.Sleep(2 * time.Second)
+
 	info := n.peerstore.Get(pid)
 	event := info.IntoMetadataEvent()
 
 	n.sendMetadataEvent(ctx, event)
-
-	json, _ := json.Marshal(event)
-
-	n.log.Info().Msgf("Succesful handshake: %s", string(json))
 }
 
 func (n *Node) handleInboundConnection(pid peer.ID) {
@@ -110,13 +114,13 @@ func (n *Node) handleInboundConnection(pid peer.ID) {
 
 	// Cleanup function
 	defer func() {
+		// Mark the peer as succesfully connected, which will reset the backoff
+		// and error to nil.
+		n.peerstore.Reset(pid)
+
 		if n.host.Network().Connectedness(pid) != network.Connected {
 			return
 		}
-
-		// Mark the peer as succesfully connected, which will reset the backoff
-		// and error to nil.
-		n.peerstore.SetConnected(pid)
 
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
@@ -159,14 +163,13 @@ func (n *Node) handleInboundConnection(pid peer.ID) {
 		n.peerstore.SetClientVersion(pid, v.(string))
 	}
 
+	// Sleep 2 seconds to allow for all subnet subscriptions to be processed
+	time.Sleep(2 * time.Second)
+
 	info := n.peerstore.Get(pid)
 	event := info.IntoMetadataEvent()
 
 	n.sendMetadataEvent(ctx, event)
-
-	json, _ := json.Marshal(event)
-
-	n.log.Info().Msgf("Succesful handshake: %s", string(json))
 }
 
 func (n *Node) waitForStatus(ctx context.Context, pid peer.ID) error {

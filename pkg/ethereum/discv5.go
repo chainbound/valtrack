@@ -184,7 +184,7 @@ func (d *DiscoveryV5) Serve(ctx context.Context) error {
 
 					d.seenNodes[hInfo.ID] = NodeInfo{Node: *node, Flag: true}
 
-					// Send peer event to channel
+					// Send peer event
 					d.sendPeerEvent(ctx, node, hInfo)
 				}
 			}
