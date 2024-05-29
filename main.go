@@ -33,7 +33,7 @@ func main() {
 					level, _ := zerolog.ParseLevel(cfg.logLevel)
 					zerolog.SetGlobalLevel(level)
 
-					runSentry()
+					runSentry(cfg.natsURL)
 					return nil
 				},
 			},
@@ -61,7 +61,7 @@ func main() {
 				Name:        "nats-url",
 				Usage:       "NATS server URL (needs JetStream)",
 				Aliases:     []string{"n"},
-				Value:       "nats://localhost:4222",
+				Value:       "", // If empty URL, run without NATS
 				Destination: &cfg.natsURL,
 			},
 		},
@@ -73,8 +73,8 @@ func main() {
 
 }
 
-func runSentry() {
-	disc, err := discovery.NewDiscovery()
+func runSentry(natsURL string) {
+	disc, err := discovery.NewDiscovery(natsURL)
 	if err != nil {
 		panic(err)
 	}

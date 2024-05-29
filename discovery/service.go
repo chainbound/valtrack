@@ -19,7 +19,7 @@ type Discovery struct {
 	node *ethereum.Node
 }
 
-func NewDiscovery() (*Discovery, error) {
+func NewDiscovery(natsURL string) (*Discovery, error) {
 	var privBytes []byte
 
 	key, err := ecdsa.GenerateKey(gcrypto.S256(), rand.Reader)
@@ -33,6 +33,7 @@ func NewDiscovery() (*Discovery, error) {
 	nodeConfig := &config.DefaultNodeConfig
 	nodeConfig.PrivateKey = privateKey
 	nodeConfig.BeaconConfig = params.MainnetConfig()
+	nodeConfig.NatsURL = natsURL
 
 	n, err := ethereum.NewNode(nodeConfig)
 
