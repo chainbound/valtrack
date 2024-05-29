@@ -3,7 +3,6 @@ package ethereum
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"time"
 
 	"github.com/libp2p/go-libp2p/core/network"
@@ -108,10 +107,6 @@ func (n *Node) handleOutboundConnection(pid peer.ID) {
 	event := info.IntoMetadataEvent()
 
 	n.sendMetadataEvent(ctx, event)
-
-	json, _ := json.Marshal(event)
-
-	n.log.Info().Msgf("Succesful handshake: %s", string(json))
 }
 
 func (n *Node) handleInboundConnection(pid peer.ID) {
@@ -175,10 +170,6 @@ func (n *Node) handleInboundConnection(pid peer.ID) {
 	event := info.IntoMetadataEvent()
 
 	n.sendMetadataEvent(ctx, event)
-
-	json, _ := json.Marshal(event)
-
-	n.log.Info().Msgf("Succesful handshake: %s", string(json))
 }
 
 func (n *Node) waitForStatus(ctx context.Context, pid peer.ID) error {

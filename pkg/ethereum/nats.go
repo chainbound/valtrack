@@ -71,14 +71,10 @@ func (n *Node) sendMetadataEvent(ctx context.Context, event *MetadataReceivedEve
 	event.CrawlerID = getCrawlerMachineID()
 	event.CrawlerLoc = getCrawlerLocation()
 
-	n.log.Info().Any("metadata_event", event).Msg("metadata_received event")
+	json, _ := json.Marshal(event)
+	n.log.Info().Msgf("Succesful handshake: %s", string(json))
 
 	if n.js == nil {
-		json, err := json.Marshal(event)
-		if err != nil {
-			n.log.Error().Err(err).Msg("Failed to marshal metadata_received event")
-			return
-		}
 		fmt.Fprintln(n.fileLogger, string(json))
 		return
 	}
@@ -126,14 +122,10 @@ func (d *DiscoveryV5) sendPeerEvent(ctx context.Context, node *enode.Node, hInfo
 		Timestamp:  time.Now().UnixMilli(),
 	}
 
-	d.log.Info().Any("peer_event", peerEvent).Msg("peer_discovered event")
+	json, _ := json.Marshal(peerEvent)
+	d.log.Info().Msgf("Discovered peer: %s", string(json))
 
 	if d.js == nil {
-		json, err := json.Marshal(peerEvent)
-		if err != nil {
-			d.log.Error().Err(err).Msg("Failed to marshal peer_discovered event")
-			return
-		}
 		fmt.Fprintln(d.fileLogger, string(json))
 		return
 	}
