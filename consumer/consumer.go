@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/chainbound/valtrack/log"
 	"github.com/chainbound/valtrack/pkg/ethereum"
@@ -26,6 +27,9 @@ type Consumer struct {
 	metadataReceivedWriter *writer.ParquetWriter
 	validatorWriter        *writer.ParquetWriter
 	js                     jetstream.JetStream
+
+	peerDiscoveredChan   chan *ethereum.PeerDiscoveredEvent
+	metadataReceivedChan chan *ethereum.MetadataReceivedEvent
 }
 
 type ParquetPeerDiscoveredEvent struct {
@@ -100,6 +104,7 @@ func RunConsumer(natsURL string) {
 	if err != nil {
 		log.Fatal().Err(err).Msg("Error creating validator parquet file")
 	}
+	defer w_validator.Close()
 
 	metadataReceivedWriter, err := writer.NewParquetWriter(w_metadata, new(ParquetMetadataReceivedEvent), 4)
 	if err != nil {
@@ -143,13 +148,16 @@ func RunConsumer(natsURL string) {
 		metadataReceivedWriter: metadataReceivedWriter,
 		validatorWriter:        validatorWriter,
 		js:                     js,
+
+		peerDiscoveredChan:   make(chan *ethereum.PeerDiscoveredEvent, 1024),
+		metadataReceivedChan: make(chan *ethereum.MetadataReceivedEvent, 1024),
 	}
 
-	cctx, err := eventSourcingConsumer(consumer)
-	if err != nil {
-		log.Fatal().Err(err).Msg("Error creating consumer")
-	}
-	defer cctx.Stop()
+	go func() {
+		if err := consumer.Start(); err != nil {
+			log.Fatal().Err(err).Msg("Error in consumer")
+		}
+	}()
 
 	// Gracefully shutdown
 	quit := make(chan os.Signal, 1)
@@ -157,10 +165,12 @@ func RunConsumer(natsURL string) {
 	<-quit
 }
 
-func eventSourcingConsumer(cons Consumer) (jetstream.ConsumeContext, error) {
-	ctx := context.Background()
+func (c *Consumer) Start() error {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
 
 	uniqueID := uuid.New().String()
+	c.log.Info().Str("unique_id", uniqueID).Msg("Starting consumer")
 
 	// Set up a consumer
 	consumerCfg := jetstream.ConsumerConfig{
@@ -170,46 +180,82 @@ func eventSourcingConsumer(cons Consumer) (jetstream.ConsumeContext, error) {
 		AckPolicy:   jetstream.AckExplicitPolicy,
 	}
 
-	consumer, err := cons.js.CreateOrUpdateConsumer(ctx, "EVENTS", consumerCfg)
+	// TODO: Change the stream name to 'valtrack'
+	stream, err := c.js.Stream(ctx, "EVENTS")
 	if err != nil {
-		return nil, err
+		c.log.Error().Err(err).Msg("Error opening valtrack jetstream")
+		return err
 	}
 
-	return consumer.Consume(func(msg jetstream.Msg) {
-		handleMessage(cons, msg)
-	})
+	consumer, err := stream.CreateOrUpdateConsumer(ctx, consumerCfg)
+	if err != nil {
+		c.log.Error().Err(err).Msg("Error creating consumer")
+		return err
+	}
+
+	go func() {
+		for {
+			select {
+			default:
+				batch, err := consumer.FetchNoWait(100)
+				if err != nil {
+					c.log.Error().Err(err).Msg("Error fetching batch of messages")
+					return
+				}
+				if err = batch.Error(); err != nil {
+					c.log.Error().Err(err).Msg("Error in messages batch")
+					return
+				}
+				for msg := range batch.Messages() {
+					handleMessage(c, msg)
+				}
+			}
+		}
+	}()
+
+	return nil
 }
 
-func handleMessage(cons Consumer, msg jetstream.Msg) {
+func handleMessage(c *Consumer, msg jetstream.Msg) {
 	MsgMetadata, _ := msg.Metadata()
 	switch msg.Subject() {
 	case "events.peer_discovered":
 		var event ethereum.PeerDiscoveredEvent
 		if err := json.Unmarshal(msg.Data(), &event); err != nil {
-			cons.log.Err(err).Msg("Error unmarshaling PeerDiscoveredEvent")
+			c.log.Err(err).Msg("Error unmarshaling PeerDiscoveredEvent")
 			msg.Term()
 			return
 		}
-		cons.log.Info().Any("seq", MsgMetadata.Sequence).Any("event", event).Msg("peer_discovered")
-		storePeerDiscoveredEvent(cons.peerDiscoveredWriter, event, cons.log)
+		c.log.Info().Any("seq", MsgMetadata.Sequence).Any("event", event).Msg("peer_discovered")
+		select {
+		case c.peerDiscoveredChan <- &event:
+			c.log.Debug().Msg("Sent peer_discovered event to channel")
+		default:
+		}
+		storePeerDiscoveredEvent(c.peerDiscoveredWriter, event, c.log)
 
 	case "events.metadata_received":
 		var event ethereum.MetadataReceivedEvent
 		if err := json.Unmarshal(msg.Data(), &event); err != nil {
-			cons.log.Err(err).Msg("Error unmarshaling MetadataReceivedEvent")
+			c.log.Err(err).Msg("Error unmarshaling MetadataReceivedEvent")
 			msg.Term()
 			return
 		}
-		cons.log.Info().Any("seq", MsgMetadata.Sequence).Any("event", event).Msg("metadata_received")
-		storeValidatorEvent(cons.validatorWriter, event, cons.log)
-		storeMetadataReceivedEvent(cons.metadataReceivedWriter, event, cons.log)
+		c.log.Info().Any("seq", MsgMetadata.Sequence).Any("event", event).Msg("metadata_received")
+		select {
+		case c.metadataReceivedChan <- &event:
+			c.log.Debug().Msg("Sent metadata_received event to channel")
+		default:
+		}
+		storeValidatorEvent(c.validatorWriter, event, c.log)
+		storeMetadataReceivedEvent(c.metadataReceivedWriter, event, c.log)
 
 	default:
-		cons.log.Warn().Str("subject", msg.Subject()).Msg("Unknown event type")
+		c.log.Warn().Str("subject", msg.Subject()).Msg("Unknown event type")
 	}
 
 	if err := msg.Ack(); err != nil {
-		cons.log.Err(err).Msg("Error acknowledging message")
+		c.log.Err(err).Msg("Error acknowledging message")
 	}
 }
 
