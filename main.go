@@ -36,6 +36,15 @@ func main() {
 					runSentry(cfg.natsURL)
 					return nil
 				},
+				Flags: []cli.Flag{
+					&cli.StringFlag{
+						Name:        "nats-url",
+						Usage:       "NATS server URL (needs JetStream)",
+						Aliases:     []string{"n"},
+						Value:       "", // If empty URL, run the sentry without NATS
+						Destination: &cfg.natsURL,
+					},
+				},
 			},
 			{
 				Name:  "consumer",
@@ -47,6 +56,15 @@ func main() {
 					consumer.RunConsumer(cfg.natsURL)
 					return nil
 				},
+				Flags: []cli.Flag{
+					&cli.StringFlag{
+						Name:        "nats-url",
+						Usage:       "NATS server URL (needs JetStream)",
+						Aliases:     []string{"n"},
+						Value:       "nats://localhost:4222",
+						Destination: &cfg.natsURL,
+					},
+				},
 			},
 		},
 		Flags: []cli.Flag{
@@ -56,13 +74,6 @@ func main() {
 				Aliases:     []string{"l"},
 				Value:       "info",
 				Destination: &cfg.logLevel,
-			},
-			&cli.StringFlag{
-				Name:        "nats-url",
-				Usage:       "NATS server URL (needs JetStream)",
-				Aliases:     []string{"n"},
-				Value:       "", // If empty URL, run without NATS
-				Destination: &cfg.natsURL,
 			},
 		},
 	}
