@@ -2,8 +2,6 @@ module github.com/chainbound/valtrack
 
 go 1.22.2
 
-replace github.com/prysmaticlabs/prysm/v5 => github.com/namn-grg/prysm/v5 v5.0.4-0.20240527112642-4db22a60bf55
-
 require (
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.2.0
 	github.com/ethereum/go-ethereum v1.14.0
