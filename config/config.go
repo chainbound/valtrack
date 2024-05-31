@@ -46,7 +46,7 @@ var DefaultDiscConfig DiscConfig = DiscConfig{
 	TCP:        9000,
 	DBPath:     "",
 	ForkDigest: [4]byte{0x6a, 0x95, 0xa1, 0xa9},
-	LogPath:    "peer_discovered.log",
+	LogPath:    "discovery_events.log",
 	Bootnodes:  GetEthereumBootnodes(),
 }
 
@@ -97,5 +97,5 @@ var DefaultNodeConfig NodeConfig = NodeConfig{
 	ConcurrentDialers: 64,
 	IP:                "0.0.0.0",
 	Port:              9000,
-	LogPath:           "metadata_received.log",
+	LogPath:           "metadata_events.log",
 }
