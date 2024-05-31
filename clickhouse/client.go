@@ -17,6 +17,9 @@ type ClickhouseConfig struct {
 	DB       string
 	Username string
 	Password string
+
+	MaxPeerDiscoveredBatchSize   uint64
+	MaxMetadataReceivedBatchSize uint64
 }
 
 type ClickhouseClient struct {
@@ -24,6 +27,9 @@ type ClickhouseClient struct {
 	log zerolog.Logger
 
 	chConn driver.Conn
+
+	peerDiscovered   chan *ClickHousePeerDiscoveredEvent
+	metadataReceived chan *ClickHouseMetadataReceivedEvent
 }
 
 func NewClickhouseClient(cfg *ClickhouseConfig) (*ClickhouseClient, error) {
@@ -63,5 +69,130 @@ func (c *ClickhouseClient) Start() error {
 	}
 	c.log.Info().Str("db", c.cfg.DB).Msg("Database created")
 
+	if err := c.chConn.Exec(context.Background(), PeerDiscoveredDDL(c.cfg.DB)); err != nil {
+		return err
+	}
+
+	if err := c.chConn.Exec(context.Background(), MetadataReceivedDDL(c.cfg.DB)); err != nil {
+		return err
+	}
+
+	go c.peerDiscoveredBatcher()
+	go c.metadataReceivedBatcher()
+
 	return nil
+}
+
+func (c *ClickhouseClient) peerDiscoveredBatcher() {
+	var (
+		err   error
+		batch driver.Batch
+	)
+
+	count := uint64(0)
+
+	for {
+		batch, err = c.chConn.PrepareBatch(context.Background(), fmt.Sprintf("INSERT INTO %s.peer_discovered", c.cfg.DB))
+		if err != nil {
+			c.log.Error().Err(err).Msg("preparing transaction_observations batch failed, retrying...")
+		} else {
+			break
+		}
+	}
+
+	for row := range c.peerDiscovered {
+		if err := batch.AppendStruct(row); err != nil {
+			c.log.Error().Err(err).Msg("appending struct to peer discovered batch")
+		}
+
+		count++
+
+		if count >= c.cfg.MaxPeerDiscoveredBatchSize {
+			// Reset counter
+			count = 0
+
+			start := time.Now()
+			// Infinite retries for now
+			for {
+				if batch.IsSent() {
+					break
+				}
+
+				if err := batch.Send(); err != nil {
+					c.log.Error().Err(err).Msg("sending peer discovered batch failed, retrying...")
+				} else {
+					break
+				}
+			}
+
+			c.log.Debug().Str("took", time.Since(start).String()).Int("channel_len", len(c.peerDiscovered)).Msg("Inserted peer discovered batch")
+
+			// Reset batch
+			for {
+				batch, err = c.chConn.PrepareBatch(context.Background(), fmt.Sprintf("INSERT INTO %s.peer_discovered", c.cfg.DB))
+				if err != nil {
+					c.log.Error().Err(err).Msg("preparing peer_discovered batch (reset) failed, retrying")
+				} else {
+					break
+				}
+			}
+		}
+	}
+}
+
+func (c *ClickhouseClient) metadataReceivedBatcher() {
+	var (
+		err   error
+		batch driver.Batch
+	)
+
+	count := uint64(0)
+
+	for {
+		batch, err = c.chConn.PrepareBatch(context.Background(), fmt.Sprintf("INSERT INTO %s.metadata_received", c.cfg.DB))
+		if err != nil {
+			c.log.Error().Err(err).Msg("preparing metadata_received batch failed, retrying...")
+		} else {
+			break
+		}
+	}
+
+	for row := range c.metadataReceived {
+		if err := batch.AppendStruct(row); err != nil {
+			c.log.Error().Err(err).Msg("appending struct to metadata_received batch")
+		}
+
+		count++
+
+		if count >= c.cfg.MaxMetadataReceivedBatchSize {
+			// Reset counter
+			count = 0
+
+			start := time.Now()
+			// Infinite retries for now
+			for {
+				if batch.IsSent() {
+					break
+				}
+
+				if err := batch.Send(); err != nil {
+					c.log.Error().Err(err).Msg("sending metadata_received batch failed, retrying...")
+				} else {
+					break
+				}
+			}
+
+			c.log.Debug().Str("took", time.Since(start).String()).Int("channel_len", len(c.metadataReceived)).Msg("Inserted metadata_received batch")
+
+			// Reset batch
+			for {
+				batch, err = c.chConn.PrepareBatch(context.Background(), fmt.Sprintf("INSERT INTO %s.metadata_received", c.cfg.DB))
+				if err != nil {
+					c.log.Error().Err(err).Msg("preparing metadata_received batch (reset) failed, retrying")
+				} else {
+					break
+				}
+			}
+		}
+	}
 }
