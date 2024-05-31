@@ -20,7 +20,6 @@ import (
 	"github.com/libp2p/go-libp2p/p2p/security/noise"
 	"github.com/libp2p/go-libp2p/p2p/transport/tcp"
 	gomplex "github.com/libp2p/go-mplex"
-	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
 	"github.com/pkg/errors"
 	"github.com/prysmaticlabs/prysm/v5/beacon-chain/p2p/encoder"
@@ -58,7 +57,7 @@ type Node struct {
 func NewNode(cfg *config.NodeConfig) (*Node, error) {
 	log := log.NewLogger("node")
 
-	file, err := os.Create("handshakes.log")
+	file, err := os.Create(cfg.LogPath)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to create log file")
 	}
@@ -73,6 +72,7 @@ func NewNode(cfg *config.NodeConfig) (*Node, error) {
 
 	// TODO: read config from node config
 	conf := config.DefaultDiscConfig
+	conf.NatsURL = cfg.NatsURL
 	disc, err := NewDiscoveryV5(discKey, &conf)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to create DiscoveryV5 service")
@@ -117,33 +117,9 @@ func NewNode(cfg *config.NodeConfig) (*Node, error) {
 		return nil, fmt.Errorf("failed to create reqresp: %w", err)
 	}
 
-	url := os.Getenv("NATS_URL")
-	if url == "" {
-		url = nats.DefaultURL
-	}
-
-	// Initialize NATS JetStream
-	nc, err := nats.Connect(url)
+	js, err := createNatsStream(cfg.NatsURL)
 	if err != nil {
-		return nil, fmt.Errorf("failed to connect to NATS: %w", err)
-	}
-
-	js, err := jetstream.New(nc)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create JetStream context: %w", err)
-	}
-
-	cfgjs := jetstream.StreamConfig{
-		Name:      "EVENTS",
-		Retention: jetstream.InterestPolicy,
-		Subjects:  []string{"events.metadata_received", "events.peer_discovered"},
-	}
-
-	ctxJs := context.Background()
-
-	_, err = js.CreateOrUpdateStream(ctxJs, cfgjs)
-	if err != nil {
-		return nil, errors.Wrap(err, "Failed to create JetStream stream")
+		return nil, errors.Wrap(err, "failed to create NATS JetStream")
 	}
 
 	// Log the node's peer ID and addresses
@@ -213,8 +189,10 @@ func (n *Node) Start(ctx context.Context) error {
 	// Register the node itself as the notifiee for network connection events
 	n.host.Network().Notify(n)
 
-	n.startMetadataPublisher()
-
+	if n.js != nil {
+		// Start the metadata event publisher
+		n.startMetadataPublisher()
+	}
 	// Start the discovery service
 	go n.runDiscovery(ctx)
 

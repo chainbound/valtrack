@@ -3,9 +3,14 @@ package ethereum
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"os"
 	"time"
 
 	"github.com/ethereum/go-ethereum/p2p/enode"
+	"github.com/nats-io/nats.go"
+	"github.com/nats-io/nats.go/jetstream"
+	"github.com/pkg/errors"
 	eth "github.com/prysmaticlabs/prysm/v5/proto/prysm/v1alpha1"
 )
 
@@ -32,9 +37,51 @@ type MetadataReceivedEvent struct {
 	Timestamp         int64           `json:"timestamp"` // Timestamp in UNIX milliseconds
 }
 
+func createNatsStream(url string) (js jetstream.JetStream, err error) {
+	// If empty URL and empty env variable, return nil and run without NATS
+	if url == "" {
+		if os.Getenv("NATS_URL") == "" {
+			return nil, nil
+		}
+		url = os.Getenv("NATS_URL")
+	}
+	// Initialize NATS JetStream
+	nc, err := nats.Connect(url)
+	if err != nil {
+		return nil, errors.Wrap(err, "Failed to connect to NATS")
+	}
+
+	js, err = jetstream.New(nc)
+	if err != nil {
+		return nil, errors.Wrap(err, "Failed to create JetStream context")
+	}
+
+	cfgjs := jetstream.StreamConfig{
+		Name:      "EVENTS",
+		Retention: jetstream.InterestPolicy,
+		Subjects:  []string{"events.metadata_received", "events.peer_discovered"},
+	}
+
+	ctxJs := context.Background()
+
+	_, err = js.CreateOrUpdateStream(ctxJs, cfgjs)
+	if err != nil {
+		return nil, errors.Wrap(err, "Failed to create JetStream stream")
+	}
+	return js, nil
+}
+
 func (n *Node) sendMetadataEvent(ctx context.Context, event *MetadataReceivedEvent) {
 	event.CrawlerID = getCrawlerMachineID()
 	event.CrawlerLoc = getCrawlerLocation()
+
+	json, _ := json.Marshal(event)
+	n.log.Info().Msgf("Succesful handshake: %s", string(json))
+
+	if n.js == nil {
+		fmt.Fprintln(n.fileLogger, string(json))
+		return
+	}
 
 	select {
 	case n.metadataEventChan <- event:
@@ -77,6 +124,14 @@ func (d *DiscoveryV5) sendPeerEvent(ctx context.Context, node *enode.Node, hInfo
 		CrawlerID:  getCrawlerMachineID(),
 		CrawlerLoc: getCrawlerLocation(),
 		Timestamp:  time.Now().UnixMilli(),
+	}
+
+	json, _ := json.Marshal(peerEvent)
+	d.log.Info().Msgf("Discovered peer: %s", string(json))
+
+	if d.js == nil {
+		fmt.Fprintln(d.fileLogger, string(json))
+		return
 	}
 
 	select {
