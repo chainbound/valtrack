@@ -128,8 +128,8 @@ jetstreamCfg := jetstream.StreamConfig{
 	}
 ```
 
--   RetentionPolicy is set to InterestPolicy, which means that the messages are retained based on the consumer interest in the messages. The messages are retained until is not acknowledged by all the consumers. If there is zero consumer, the messages are deleted i.e. not retained. [DOCS](https://docs.nats.io/nats-concepts/jetstream/streams#retentionpolicy)
--   The subjects are the NATS subjects where the sentry data is published.
+- RetentionPolicy is set to InterestPolicy, which means that the messages are retained based on the consumer interest in the messages. The messages are retained until they're acknowledged by all the consumers. If there are no consumers, the messages are not retained. [DOCS](https://docs.nats.io/nats-concepts/jetstream/streams#retentionpolicy)
+- The subjects are the NATS subjects where the sentry data is published.
 
 #### Consumer Configuration
 
@@ -145,8 +145,8 @@ consumerCfg := jetstream.ConsumerConfig{
 	}
 ```
 
--   Durable is set, which means that the consumer will be binded until explicitly deleted.
--   AckPolicy is set to AckExplicitPolicy, which means that the consumer has to explicitly acknowledge the message. [DOCS](https://docs.nats.io/nats-concepts/jetstream/consumers#ackpolicy)
+- Durable is set, which means that the consumer will be binded until explicitly deleted.
+- AckPolicy is set to AckExplicitPolicy, which means that the consumer has to explicitly acknowledge the message. [DOCS](https://docs.nats.io/nats-concepts/jetstream/consumers#ackpolicy)
 
 #### Useful Commands
 
@@ -176,8 +176,6 @@ nats consumer rm <STREAM_NAME> <CONSUMER_NAME> --server <NATS_URL>
 
 ## Credits
 
-Shoutout to the following projects for inspiration and reference :
-
+Shoutout to the following projects for inspiration and reference:
 -   [Hermes](https://github.com/probe-lab/hermes)
-
 -   [Armiarma](https://github.com/migalabs/armiarma/)
