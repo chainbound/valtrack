@@ -12,14 +12,42 @@ import (
 	"github.com/rs/zerolog"
 )
 
+func ValidatorMetadataDDL(db string) string {
+	return fmt.Sprintf(`CREATE TABLE IF NOT EXISTS %s.validator_metadata (
+		peer_id String,
+		enr String,
+		multiaddr String,
+		ip String,
+		port UInt16,
+		last_seen UInt64,
+		last_epoch UInt64,
+		possible_validator UInt8,
+		average_validator_count Int32,
+		num_observations UInt64
+	) ENGINE = MergeTree()
+PRIMARY KEY (peer_id, last_seen)`, db)
+}
+
+type ValidatorMetadataEvent struct {
+	PeerID                string `ch:"peer_id"`
+	ENR                   string `ch:"enr"`
+	Multiaddr             string `ch:"multiaddr"`
+	IP                    string `ch:"ip"`
+	Port                  uint16 `ch:"port"`
+	LastSeen              uint64 `ch:"last_seen"`
+	LastEpoch             uint64 `ch:"last_epoch"`
+	PossibleValidator     uint8  `ch:"possible_validator"`
+	AverageValidatorCount int32  `ch:"average_validator_count"`
+	NumObservations       uint64 `ch:"num_observations"`
+}
+
 type ClickhouseConfig struct {
 	Endpoint string
 	DB       string
 	Username string
 	Password string
 
-	MaxPeerDiscoveredBatchSize   uint64
-	MaxMetadataReceivedBatchSize uint64
+	MaxValidatorBatchSize uint64
 }
 
 type ClickhouseClient struct {
@@ -28,8 +56,7 @@ type ClickhouseClient struct {
 
 	chConn driver.Conn
 
-	peerDiscovered   chan *ClickHousePeerDiscoveredEvent
-	metadataReceived chan *ClickHouseMetadataReceivedEvent
+	validatorEventChan chan *ValidatorMetadataEvent
 }
 
 func NewClickhouseClient(cfg *ClickhouseConfig) (*ClickhouseClient, error) {
@@ -59,31 +86,30 @@ func NewClickhouseClient(cfg *ClickhouseConfig) (*ClickhouseClient, error) {
 		cfg:    cfg,
 		log:    log,
 		chConn: conn,
+
+		validatorEventChan: make(chan *ValidatorMetadataEvent, 128),
 	}, nil
 }
 
 func (c *ClickhouseClient) Start() error {
 	c.log.Info().Str("endpoint", c.cfg.Endpoint).Msg("Setting up Clickhouse database")
 	if err := c.chConn.Exec(context.Background(), fmt.Sprintf("CREATE DATABASE IF NOT EXISTS %s", c.cfg.DB)); err != nil {
+		c.log.Error().Err(err).Msg("creating database")
 		return err
 	}
 	c.log.Info().Str("db", c.cfg.DB).Msg("Database created")
 
-	if err := c.chConn.Exec(context.Background(), PeerDiscoveredDDL(c.cfg.DB)); err != nil {
+	if err := c.chConn.Exec(context.Background(), ValidatorMetadataDDL(c.cfg.DB)); err != nil {
+		c.log.Error().Err(err).Msg("creating validator_metadata table")
 		return err
 	}
 
-	if err := c.chConn.Exec(context.Background(), MetadataReceivedDDL(c.cfg.DB)); err != nil {
-		return err
-	}
-
-	go c.peerDiscoveredBatcher()
-	go c.metadataReceivedBatcher()
+	go c.validatorEventBatcher()
 
 	return nil
 }
 
-func (c *ClickhouseClient) peerDiscoveredBatcher() {
+func (c *ClickhouseClient) validatorEventBatcher() {
 	var (
 		err   error
 		batch driver.Batch
@@ -92,22 +118,22 @@ func (c *ClickhouseClient) peerDiscoveredBatcher() {
 	count := uint64(0)
 
 	for {
-		batch, err = c.chConn.PrepareBatch(context.Background(), fmt.Sprintf("INSERT INTO %s.peer_discovered", c.cfg.DB))
+		batch, err = c.chConn.PrepareBatch(context.Background(), fmt.Sprintf("INSERT INTO %s.validator_metadata", c.cfg.DB))
 		if err != nil {
-			c.log.Error().Err(err).Msg("preparing transaction_observations batch failed, retrying...")
+			c.log.Error().Err(err).Msg("preparing validator_metadata batch failed, retrying...")
 		} else {
 			break
 		}
 	}
 
-	for row := range c.peerDiscovered {
+	for row := range c.validatorEventChan {
 		if err := batch.AppendStruct(row); err != nil {
-			c.log.Error().Err(err).Msg("appending struct to peer discovered batch")
+			c.log.Error().Err(err).Msg("appending struct to validator_metadata batch")
 		}
 
 		count++
 
-		if count >= c.cfg.MaxPeerDiscoveredBatchSize {
+		if count >= c.cfg.MaxValidatorBatchSize {
 			// Reset counter
 			count = 0
 
@@ -119,76 +145,19 @@ func (c *ClickhouseClient) peerDiscoveredBatcher() {
 				}
 
 				if err := batch.Send(); err != nil {
-					c.log.Error().Err(err).Msg("sending peer discovered batch failed, retrying...")
+					c.log.Error().Err(err).Msg("sending validator_metadata batch failed, retrying...")
 				} else {
 					break
 				}
 			}
 
-			c.log.Debug().Str("took", time.Since(start).String()).Int("channel_len", len(c.peerDiscovered)).Msg("Inserted peer discovered batch")
+			c.log.Debug().Str("took", time.Since(start).String()).Int("channel_len", len(c.validatorEventChan)).Msg("Inserted validator_metadata batch")
 
 			// Reset batch
 			for {
-				batch, err = c.chConn.PrepareBatch(context.Background(), fmt.Sprintf("INSERT INTO %s.peer_discovered", c.cfg.DB))
+				batch, err = c.chConn.PrepareBatch(context.Background(), fmt.Sprintf("INSERT INTO %s.validator_metadata", c.cfg.DB))
 				if err != nil {
-					c.log.Error().Err(err).Msg("preparing peer_discovered batch (reset) failed, retrying")
-				} else {
-					break
-				}
-			}
-		}
-	}
-}
-
-func (c *ClickhouseClient) metadataReceivedBatcher() {
-	var (
-		err   error
-		batch driver.Batch
-	)
-
-	count := uint64(0)
-
-	for {
-		batch, err = c.chConn.PrepareBatch(context.Background(), fmt.Sprintf("INSERT INTO %s.metadata_received", c.cfg.DB))
-		if err != nil {
-			c.log.Error().Err(err).Msg("preparing metadata_received batch failed, retrying...")
-		} else {
-			break
-		}
-	}
-
-	for row := range c.metadataReceived {
-		if err := batch.AppendStruct(row); err != nil {
-			c.log.Error().Err(err).Msg("appending struct to metadata_received batch")
-		}
-
-		count++
-
-		if count >= c.cfg.MaxMetadataReceivedBatchSize {
-			// Reset counter
-			count = 0
-
-			start := time.Now()
-			// Infinite retries for now
-			for {
-				if batch.IsSent() {
-					break
-				}
-
-				if err := batch.Send(); err != nil {
-					c.log.Error().Err(err).Msg("sending metadata_received batch failed, retrying...")
-				} else {
-					break
-				}
-			}
-
-			c.log.Debug().Str("took", time.Since(start).String()).Int("channel_len", len(c.metadataReceived)).Msg("Inserted metadata_received batch")
-
-			// Reset batch
-			for {
-				batch, err = c.chConn.PrepareBatch(context.Background(), fmt.Sprintf("INSERT INTO %s.metadata_received", c.cfg.DB))
-				if err != nil {
-					c.log.Error().Err(err).Msg("preparing metadata_received batch (reset) failed, retrying")
+					c.log.Error().Err(err).Msg("preparing validator_metadata batch (reset) failed, retrying")
 				} else {
 					break
 				}
