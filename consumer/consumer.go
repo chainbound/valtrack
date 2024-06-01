@@ -162,9 +162,17 @@ func RunConsumer(cfg *ConsumerConfig) {
 		MaxValidatorBatchSize: 10,
 	}
 
-	chClient, err := ch.NewClickhouseClient(&chCfg)
-	if err != nil {
-		log.Fatal().Err(err).Msg("Error creating Clickhouse client")
+	var chClient *ch.ClickhouseClient
+	if chCfg.Endpoint != "" {
+		chClient, err = ch.NewClickhouseClient(&chCfg)
+		if err != nil {
+			log.Fatal().Err(err).Msg("Error creating Clickhouse client")
+		}
+
+		err = chClient.Start()
+		if err != nil {
+			log.Fatal().Err(err).Msg("Error starting Clickhouse client")
+		}
 	}
 
 	consumer := Consumer{
@@ -195,12 +203,6 @@ func RunConsumer(cfg *ConsumerConfig) {
 }
 
 func (c *Consumer) Start(name string) error {
-	err := c.chClient.Start()
-	if err != nil {
-		c.log.Error().Err(err).Msg("Error starting Clickhouse client")
-		return err
-	}
-
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
@@ -419,7 +421,9 @@ func (c *Consumer) HandleValidatorMetadataEvent() error {
 			c.validatorCache[event.ID] = &validatorMetadata
 
 			// Write to Clickhouse
-			c.chClient.InsertValidatorMetadata(&validatorMetadata)
+			if c.chClient != nil {
+				c.chClient.ValidatorEventChan <- &validatorMetadata
+			}
 		default:
 			c.log.Debug().Msg("No validator metadata event")
 			time.Sleep(1 * time.Second) // Prevents busy waiting

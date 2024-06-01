@@ -33,7 +33,7 @@ var ConsumerCommand = &cli.Command{
 		&cli.StringFlag{
 			Name:  "endpoint",
 			Usage: "Clickhouse server endpoint",
-			Value: "localhost:9000",
+			Value: "", // If empty URL, run the consumer without Clickhouse
 		},
 		&cli.StringFlag{
 			Name:  "db",

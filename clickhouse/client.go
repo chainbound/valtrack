@@ -56,7 +56,7 @@ type ClickhouseClient struct {
 
 	chConn driver.Conn
 
-	validatorEventChan chan *ValidatorMetadataEvent
+	ValidatorEventChan chan *ValidatorMetadataEvent
 }
 
 func NewClickhouseClient(cfg *ClickhouseConfig) (*ClickhouseClient, error) {
@@ -87,7 +87,7 @@ func NewClickhouseClient(cfg *ClickhouseConfig) (*ClickhouseClient, error) {
 		log:    log,
 		chConn: conn,
 
-		validatorEventChan: make(chan *ValidatorMetadataEvent, 128),
+		ValidatorEventChan: make(chan *ValidatorMetadataEvent, 128),
 	}, nil
 }
 
@@ -126,7 +126,7 @@ func (c *ClickhouseClient) validatorEventBatcher() {
 		}
 	}
 
-	for row := range c.validatorEventChan {
+	for row := range c.ValidatorEventChan {
 		if err := batch.AppendStruct(row); err != nil {
 			c.log.Error().Err(err).Msg("appending struct to validator_metadata batch")
 		}
@@ -151,7 +151,7 @@ func (c *ClickhouseClient) validatorEventBatcher() {
 				}
 			}
 
-			c.log.Debug().Str("took", time.Since(start).String()).Int("channel_len", len(c.validatorEventChan)).Msg("Inserted validator_metadata batch")
+			c.log.Debug().Str("took", time.Since(start).String()).Int("channel_len", len(c.ValidatorEventChan)).Msg("Inserted validator_metadata batch")
 
 			// Reset batch
 			for {
@@ -164,8 +164,4 @@ func (c *ClickhouseClient) validatorEventBatcher() {
 			}
 		}
 	}
-}
-
-func (c *ClickhouseClient) InsertValidatorMetadata(event *ValidatorMetadataEvent) {
-	c.validatorEventChan <- event
 }
