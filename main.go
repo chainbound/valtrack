@@ -10,7 +10,7 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/urfave/cli/v2"
 
-	"github.com/chainbound/valtrack/consumer"
+	"github.com/chainbound/valtrack/cmd"
 	"github.com/chainbound/valtrack/discovery"
 )
 
@@ -38,6 +38,13 @@ func main() {
 				},
 				Flags: []cli.Flag{
 					&cli.StringFlag{
+						Name:        "log-level",
+						Usage:       "log level",
+						Aliases:     []string{"l"},
+						Value:       "info",
+						Destination: &cfg.logLevel,
+					},
+					&cli.StringFlag{
 						Name:        "nats-url",
 						Usage:       "NATS server URL (needs JetStream)",
 						Aliases:     []string{"n"},
@@ -46,35 +53,7 @@ func main() {
 					},
 				},
 			},
-			{
-				Name:  "consumer",
-				Usage: "run the consumer",
-				Action: func(*cli.Context) error {
-					level, _ := zerolog.ParseLevel(cfg.logLevel)
-					zerolog.SetGlobalLevel(level)
-
-					consumer.RunConsumer(cfg.natsURL)
-					return nil
-				},
-				Flags: []cli.Flag{
-					&cli.StringFlag{
-						Name:        "nats-url",
-						Usage:       "NATS server URL (needs JetStream)",
-						Aliases:     []string{"n"},
-						Value:       "nats://localhost:4222",
-						Destination: &cfg.natsURL,
-					},
-				},
-			},
-		},
-		Flags: []cli.Flag{
-			&cli.StringFlag{
-				Name:        "log-level",
-				Usage:       "log level",
-				Aliases:     []string{"l"},
-				Value:       "info",
-				Destination: &cfg.logLevel,
-			},
+			cmd.ConsumerCommand,
 		},
 	}
 

@@ -11,10 +11,10 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/chainbound/valtrack/clickhouse"
 	ch "github.com/chainbound/valtrack/clickhouse"
 	"github.com/chainbound/valtrack/log"
 	"github.com/chainbound/valtrack/pkg/ethereum"
-	"github.com/google/uuid"
 	ma "github.com/multiformats/go-multiaddr"
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
@@ -22,6 +22,13 @@ import (
 	"github.com/xitongsys/parquet-go-source/local"
 	"github.com/xitongsys/parquet-go/writer"
 )
+
+type ConsumerConfig struct {
+	LogLevel string
+	NatsURL  string
+	Name     string
+	ChCfg    clickhouse.ClickhouseConfig
+}
 
 type Consumer struct {
 	log                    zerolog.Logger
@@ -78,10 +85,10 @@ type SimpleMetaData struct {
 	Syncnets  string `parquet:"name=syncnets, type=BYTE_ARRAY, convertedtype=UTF8"`
 }
 
-func RunConsumer(natsURL string) {
+func RunConsumer(cfg *ConsumerConfig) {
 	log := log.NewLogger("consumer")
 
-	nc, err := nats.Connect(natsURL)
+	nc, err := nats.Connect(cfg.NatsURL)
 	if err != nil {
 		log.Fatal().Err(err).Msg("Error connecting to NATS")
 	}
@@ -147,10 +154,10 @@ func RunConsumer(natsURL string) {
 	}()
 
 	chCfg := ch.ClickhouseConfig{
-		Endpoint: "",
-		DB:       "default",
-		Username: "default",
-		Password: "",
+		Endpoint: cfg.ChCfg.Endpoint,
+		DB:       cfg.ChCfg.DB,
+		Username: cfg.ChCfg.Username,
+		Password: cfg.ChCfg.Password,
 
 		MaxValidatorBatchSize: 10,
 	}
@@ -174,7 +181,7 @@ func RunConsumer(natsURL string) {
 	}
 
 	go func() {
-		if err := consumer.Start(); err != nil {
+		if err := consumer.Start(cfg.Name); err != nil {
 			log.Fatal().Err(err).Msg("Error in consumer")
 		}
 	}()
@@ -187,7 +194,7 @@ func RunConsumer(natsURL string) {
 	<-quit
 }
 
-func (c *Consumer) Start() error {
+func (c *Consumer) Start(name string) error {
 	err := c.chClient.Start()
 	if err != nil {
 		c.log.Error().Err(err).Msg("Error starting Clickhouse client")
@@ -197,13 +204,10 @@ func (c *Consumer) Start() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	uniqueID := uuid.New().String()
-	c.log.Info().Str("unique_id", uniqueID).Msg("Starting consumer")
-
 	// Set up a consumer
 	consumerCfg := jetstream.ConsumerConfig{
-		Name:        fmt.Sprintf("consumer-%s", uniqueID),
-		Durable:     fmt.Sprintf("consumer-%s", uniqueID),
+		Name:        name,
+		Durable:     name,
 		Description: "Consumes valtrack events",
 		AckPolicy:   jetstream.AckExplicitPolicy,
 	}
