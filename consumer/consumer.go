@@ -366,29 +366,13 @@ func (c *Consumer) HandleValidatorMetadataEvent() error {
 		case event := <-c.validatorMetadataChan:
 			c.log.Info().Any("event", event).Msg("Received validator event")
 
-			maddr, err := ma.NewMultiaddr(event.Multiaddr)
-			if err != nil {
-				c.log.Error().Err(err).Msg("Invalid multiaddr")
-				continue
-			}
+			maddr, _ := ma.NewMultiaddr(event.Multiaddr)
 
-			ip, err := maddr.ValueForProtocol(ma.P_IP4)
-			if err != nil {
-				c.log.Error().Err(err).Msg("Invalid IP in multiaddr")
-				continue
-			}
+			ip, _ := maddr.ValueForProtocol(ma.P_IP4)
 
-			portStr, err := maddr.ValueForProtocol(ma.P_TCP)
-			if err != nil {
-				c.log.Error().Err(err).Msg("Invalid port in multiaddr")
-				continue
-			}
+			portStr, _ := maddr.ValueForProtocol(ma.P_TCP)
 
-			port, err := strconv.Atoi(portStr)
-			if err != nil {
-				c.log.Error().Err(err).Msg("Invalid port number")
-				continue
-			}
+			port, _ := strconv.Atoi(portStr)
 
 			isValidator := 1
 			longLived := indexesFromBitfield(event.MetaData.Attnets)
