@@ -53,7 +53,7 @@ var ConsumerCommand = &cli.Command{
 		&cli.Uint64Flag{
 			Name:  "batch-size",
 			Usage: "Clickhouse max validator batch size",
-			Value: 64,
+			Value: 128,
 		},
 	},
 }
@@ -64,11 +64,11 @@ func LaunchConsumer(c *cli.Context) error {
 		NatsURL:  c.String("nats-url"),
 		Name:     c.String("name"),
 		ChCfg: clickhouse.ClickhouseConfig{
-			Endpoint:              c.String("clickhouse-endpoint"),
-			DB:                    c.String("clickhouse-db"),
-			Username:              c.String("clickhouse-username"),
-			Password:              c.String("clickhouse-password"),
-			MaxValidatorBatchSize: c.Uint64("clickhouse-max-validator-batch-size"),
+			Endpoint:              c.String("endpoint"),
+			DB:                    c.String("db"),
+			Username:              c.String("username"),
+			Password:              c.String("password"),
+			MaxValidatorBatchSize: c.Uint64("batch-size"),
 		},
 	}
 

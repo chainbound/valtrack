@@ -159,7 +159,7 @@ func RunConsumer(cfg *ConsumerConfig) {
 		Username: cfg.ChCfg.Username,
 		Password: cfg.ChCfg.Password,
 
-		MaxValidatorBatchSize: 10,
+		MaxValidatorBatchSize: cfg.ChCfg.MaxValidatorBatchSize,
 	}
 
 	var chClient *ch.ClickhouseClient
@@ -182,7 +182,7 @@ func RunConsumer(cfg *ConsumerConfig) {
 		validatorWriter:        validatorWriter,
 		js:                     js,
 
-		validatorMetadataChan: make(chan *ethereum.MetadataReceivedEvent, 1000),
+		validatorMetadataChan: make(chan *ethereum.MetadataReceivedEvent, 16384),
 		validatorCache:        make(map[string]*ch.ValidatorMetadataEvent),
 
 		chClient: chClient,
@@ -370,22 +370,38 @@ func (c *Consumer) HandleValidatorMetadataEvent() error {
 	for {
 		select {
 		case event := <-c.validatorMetadataChan:
-			c.log.Info().Any("event", event).Msg("Received validator event")
+			c.log.Trace().Any("event", event).Msg("Received validator event")
 
-			maddr, _ := ma.NewMultiaddr(event.Multiaddr)
+			maddr, err := ma.NewMultiaddr(event.Multiaddr)
+			if err != nil {
+				c.log.Error().Err(err).Msg("Invalid multiaddr")
+				continue
+			}
 
-			ip, _ := maddr.ValueForProtocol(ma.P_IP4)
+			ip, err := maddr.ValueForProtocol(ma.P_IP4)
+			if err != nil {
+				c.log.Error().Err(err).Msg("Invalid IP in multiaddr")
+				continue
+			}
 
-			portStr, _ := maddr.ValueForProtocol(ma.P_TCP)
+			portStr, err := maddr.ValueForProtocol(ma.P_TCP)
+			if err != nil {
+				c.log.Error().Err(err).Msg("Invalid port in multiaddr")
+				continue
+			}
 
-			port, _ := strconv.Atoi(portStr)
+			port, err := strconv.Atoi(portStr)
+			if err != nil {
+				c.log.Error().Err(err).Msg("Invalid port number")
+				continue
+			}
 
-			isValidator := 1
+			isValidator := true
 			longLived := indexesFromBitfield(event.MetaData.Attnets)
 			shortLived := extractShortLivedSubnets(event.SubscribedSubnets, longLived)
 			// If there are no short lived subnets, then the peer is not a validator
 			if len(shortLived) == 0 {
-				isValidator = 0
+				isValidator = false
 			}
 
 			prevCache, found := c.validatorCache[event.ID]
@@ -412,17 +428,17 @@ func (c *Consumer) HandleValidatorMetadataEvent() error {
 				Port:                  uint16(port),
 				LastSeen:              uint64(event.Timestamp),
 				LastEpoch:             uint64(event.Epoch),
-				PossibleValidator:     uint8(isValidator),
+				PossibleValidator:     isValidator,
 				AverageValidatorCount: currAvgValidatorCount,
 				NumObservations:       prevNumObservations + 1,
 			}
-			c.log.Info().Any("validator_metadata", validatorMetadata).Msg("Inserted validator metadata")
 
 			c.validatorCache[event.ID] = &validatorMetadata
 
 			// Write to Clickhouse
 			if c.chClient != nil {
 				c.chClient.ValidatorEventChan <- &validatorMetadata
+				c.log.Trace().Any("validator_metadata", validatorMetadata).Msg("Inserted validator metadata")
 			}
 		default:
 			c.log.Debug().Msg("No validator metadata event")

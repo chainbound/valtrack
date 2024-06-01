@@ -21,7 +21,7 @@ func ValidatorMetadataDDL(db string) string {
 		port UInt16,
 		last_seen UInt64,
 		last_epoch UInt64,
-		possible_validator UInt8,
+		possible_validator Bool,
 		average_validator_count Int32,
 		num_observations UInt64
 	) ENGINE = MergeTree()
@@ -36,7 +36,7 @@ type ValidatorMetadataEvent struct {
 	Port                  uint16 `ch:"port"`
 	LastSeen              uint64 `ch:"last_seen"`
 	LastEpoch             uint64 `ch:"last_epoch"`
-	PossibleValidator     uint8  `ch:"possible_validator"` // Using uint as bool
+	PossibleValidator     bool   `ch:"possible_validator"` // Using uint as bool
 	AverageValidatorCount int32  `ch:"average_validator_count"`
 	NumObservations       uint64 `ch:"num_observations"`
 }
@@ -151,7 +151,7 @@ func (c *ClickhouseClient) validatorEventBatcher() {
 				}
 			}
 
-			c.log.Debug().Str("took", time.Since(start).String()).Int("channel_len", len(c.ValidatorEventChan)).Msg("Inserted validator_metadata batch")
+			c.log.Info().Str("took", time.Since(start).String()).Int("channel_len", len(c.ValidatorEventChan)).Msg("Inserted validator_metadata batch")
 
 			// Reset batch
 			for {
