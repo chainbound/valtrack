@@ -18,7 +18,6 @@ import (
 	ma "github.com/multiformats/go-multiaddr"
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
-	"github.com/prysmaticlabs/go-bitfield"
 	"github.com/rs/zerolog"
 	"github.com/xitongsys/parquet-go-source/local"
 	"github.com/xitongsys/parquet-go/writer"
@@ -279,39 +278,6 @@ func handleMessage(c *Consumer, msg jetstream.Msg) {
 	}
 }
 
-func indexesFromBitfield(bitV bitfield.Bitvector64) []int64 {
-	indexes := make([]int64, 0, bitV.Len())
-
-	for i := int64(0); i < 64; i++ {
-		if bitV.BitAt(uint64(i)) {
-			indexes = append(indexes, i)
-		}
-	}
-
-	return indexes
-}
-
-// TODO: is this correct
-func extractShortLivedSubnets(subscribed []int64, longLived []int64) []int64 {
-	var shortLived []int64
-	for i := 0; i < 64; i++ {
-		if contains(subscribed, int64(i)) && !contains(longLived, int64(i)) {
-			shortLived = append(shortLived, int64(i))
-		}
-	}
-
-	return shortLived
-}
-
-func contains[T comparable](slice []T, item T) bool {
-	for _, i := range slice {
-		if i == item {
-			return true
-		}
-	}
-	return false
-}
-
 func storeValidatorEvent(pw *writer.ParquetWriter, event ethereum.MetadataReceivedEvent, log zerolog.Logger) {
 	// Extract the long lived subnets from the metadata
 	longLived := indexesFromBitfield(event.MetaData.Attnets)
@@ -427,6 +393,7 @@ func (c *Consumer) HandleValidatorMetadataEvent() error {
 			isValidator := 1
 			longLived := indexesFromBitfield(event.MetaData.Attnets)
 			shortLived := extractShortLivedSubnets(event.SubscribedSubnets, longLived)
+			// If there are no short lived subnets, then the peer is not a validator
 			if len(shortLived) == 0 {
 				isValidator = 0
 			}
@@ -441,6 +408,7 @@ func (c *Consumer) HandleValidatorMetadataEvent() error {
 
 			currValidatorCount := 1 + (len(shortLived)-1)/2
 			currAvgValidatorCount := ComputeNewAvg(prevAvgValidatorCount, prevNumObservations, currValidatorCount)
+			// If there are no short lived subnets, then the validator count is 0 and the average is the same as the previous
 			if len(shortLived) == 0 {
 				currValidatorCount = 0
 				currAvgValidatorCount = prevAvgValidatorCount
@@ -469,8 +437,4 @@ func (c *Consumer) HandleValidatorMetadataEvent() error {
 			time.Sleep(1 * time.Second) // Prevents busy waiting
 		}
 	}
-}
-
-func ComputeNewAvg(prevAvg int32, prevCount uint64, currValidatorCount int) int32 {
-	return int32((int64(prevCount)*int64(prevAvg) + int64(currValidatorCount)) / int64(prevCount+1))
 }
