@@ -36,7 +36,7 @@ type ValidatorMetadataEvent struct {
 	Port                  uint16 `ch:"port"`
 	LastSeen              uint64 `ch:"last_seen"`
 	LastEpoch             uint64 `ch:"last_epoch"`
-	PossibleValidator     bool   `ch:"possible_validator"` // Using uint as bool
+	PossibleValidator     bool   `ch:"possible_validator"`
 	AverageValidatorCount int32  `ch:"average_validator_count"`
 	NumObservations       uint64 `ch:"num_observations"`
 }
