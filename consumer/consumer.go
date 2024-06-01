@@ -380,8 +380,11 @@ func (c *Consumer) HandleValidatorMetadataEvent() error {
 
 			ip, err := maddr.ValueForProtocol(ma.P_IP4)
 			if err != nil {
-				c.log.Error().Err(err).Msg("Invalid IP in multiaddr")
-				continue
+				ip, err = maddr.ValueForProtocol(ma.P_IP6)
+				if err != nil {
+					c.log.Error().Err(err).Msg("Invalid IP in multiaddr")
+					continue
+				}
 			}
 
 			portStr, err := maddr.ValueForProtocol(ma.P_TCP)
