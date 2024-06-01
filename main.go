@@ -33,8 +33,17 @@ func main() {
 					level, _ := zerolog.ParseLevel(cfg.logLevel)
 					zerolog.SetGlobalLevel(level)
 
-					runSentry()
+					runSentry(cfg.natsURL)
 					return nil
+				},
+				Flags: []cli.Flag{
+					&cli.StringFlag{
+						Name:        "nats-url",
+						Usage:       "NATS server URL (needs JetStream)",
+						Aliases:     []string{"n"},
+						Value:       "", // If empty URL, run the sentry without NATS
+						Destination: &cfg.natsURL,
+					},
 				},
 			},
 			{
@@ -47,6 +56,15 @@ func main() {
 					consumer.RunConsumer(cfg.natsURL)
 					return nil
 				},
+				Flags: []cli.Flag{
+					&cli.StringFlag{
+						Name:        "nats-url",
+						Usage:       "NATS server URL (needs JetStream)",
+						Aliases:     []string{"n"},
+						Value:       "nats://localhost:4222",
+						Destination: &cfg.natsURL,
+					},
+				},
 			},
 		},
 		Flags: []cli.Flag{
@@ -57,13 +75,6 @@ func main() {
 				Value:       "info",
 				Destination: &cfg.logLevel,
 			},
-			&cli.StringFlag{
-				Name:        "nats-url",
-				Usage:       "NATS server URL (needs JetStream)",
-				Aliases:     []string{"n"},
-				Value:       "nats://localhost:4222",
-				Destination: &cfg.natsURL,
-			},
 		},
 	}
 
@@ -73,8 +84,8 @@ func main() {
 
 }
 
-func runSentry() {
-	disc, err := discovery.NewDiscovery()
+func runSentry(natsURL string) {
+	disc, err := discovery.NewDiscovery(natsURL)
 	if err != nil {
 		panic(err)
 	}

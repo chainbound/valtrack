@@ -8,7 +8,6 @@ import (
 	"net"
 	"os"
 	"sync"
-	"time"
 
 	"github.com/chainbound/valtrack/config"
 	"github.com/chainbound/valtrack/log"
@@ -21,7 +20,6 @@ import (
 	"github.com/ethereum/go-ethereum/p2p/enode"
 	"github.com/ethereum/go-ethereum/p2p/enr"
 	ma "github.com/multiformats/go-multiaddr"
-	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
 	"github.com/pkg/errors"
 )
@@ -55,30 +53,9 @@ type DiscoveryV5 struct {
 }
 
 func NewDiscoveryV5(pk *ecdsa.PrivateKey, discConfig *config.DiscConfig) (*DiscoveryV5, error) {
-	url := os.Getenv("NATS_URL")
-	if url == "" {
-		url = nats.DefaultURL
-	}
-
-	// Init NATS connection
-	nc, err := nats.Connect(url)
+	js, err := createNatsStream(discConfig.NatsURL)
 	if err != nil {
-		return nil, errors.Wrap(err, "Failed to connect to NATS")
-	}
-
-	js, _ := jetstream.New(nc)
-
-	cfgjs := jetstream.StreamConfig{
-		Name:      "EVENTS",
-		Retention: jetstream.InterestPolicy,
-		Subjects:  []string{"events.metadata_received", "events.peer_discovered"},
-	}
-
-	ctxJs := context.Background()
-
-	_, err = js.CreateOrUpdateStream(ctxJs, cfgjs)
-	if err != nil {
-		return nil, errors.Wrap(err, "Failed to create JetStream stream")
+		return nil, errors.Wrap(err, "failed to create NATS JetStream")
 	}
 
 	// New geth logger at debug level
@@ -169,7 +146,9 @@ func (d *DiscoveryV5) Serve(ctx context.Context) error {
 	// Start iterating over randomly discovered nodes
 	iter := d.Dv5Listener.RandomNodes()
 
-	d.startDiscoveryPublisher()
+	if d.js != nil {
+		d.startDiscoveryPublisher()
+	}
 
 	defer iter.Close()
 	defer close(d.out)
@@ -205,23 +184,7 @@ func (d *DiscoveryV5) Serve(ctx context.Context) error {
 
 					d.seenNodes[hInfo.ID] = NodeInfo{Node: *node, Flag: true}
 
-					externalIp := d.Dv5Listener.LocalNode().Node().IP()
-
-					d.log.Info().
-						Str("id", hInfo.ID.String()).
-						Str("ip", hInfo.IP).
-						Int("port", hInfo.Port).
-						Any("attnets", hInfo.Attr[EnrAttnetsAttribute]).
-						Str("enr", node.String()).
-						Str("external_ip", externalIp.String()).
-						Int("total", len(d.seenNodes)).
-						Msg("Discovered new node")
-
-					// Log to file
-					fmt.Fprintf(d.fileLogger, "%s ID: %s, IP: %s, Port: %d, ENR: %s, Maddr: %v, Attnets: %v, AttnetsNum: %v\n",
-						time.Now().Format(time.RFC3339), hInfo.ID.String(), hInfo.IP, hInfo.Port, node.String(), hInfo.MAddrs, hInfo.Attr[EnrAttnetsAttribute], hInfo.Attr[EnrAttnetsNumAttribute])
-
-					// Send peer event to channel
+					// Send peer event
 					d.sendPeerEvent(ctx, node, hInfo)
 				}
 			}

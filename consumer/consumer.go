@@ -292,49 +292,7 @@ func contains[T comparable](slice []T, item T) bool {
 	return false
 }
 
-// func enodeFromPeerID(pid peer.ID) (enode.ID, error) {
-// 	pubkey, err := pid.ExtractPublicKey()
-// 	if err != nil {
-// 		return enode.ID{}, errors.Wrap(err, "error extracting public key from peer ID")
-// 	}
-
-// 	// This encodes the public key in serialized, compressed secpk256k1 format
-// 	comp, err := pubkey.Raw()
-// 	if err != nil {
-// 		return enode.ID{}, errors.Wrap(err, "error converting pubkey to raw bytes")
-// 	}
-
-// 	decomp, err := gcrypto.DecompressPubkey(comp)
-// 	if err != nil {
-// 		return enode.ID{}, errors.Wrap(err, "error decompressing pubkey")
-
-// 	}
-
-// 	return enode.PubkeyToIDV4(decomp), nil
-// }
-
 func storeValidatorEvent(pw *writer.ParquetWriter, event ethereum.MetadataReceivedEvent, log zerolog.Logger) {
-	// pid, err := peer.Decode(event.ID)
-	// if err != nil {
-	// 	log.Err(err).Str("peer", event.ID).Msg("Error converting peer ID")
-	// 	return
-	// }
-
-	// nodeID, err := enodeFromPeerID(pid)
-	// if err != nil {
-	// 	log.Err(err).Str("peer", event.ID).Msg("Error converting peer ID to enode ID")
-	// 	return
-	// }
-
-	// Get the subscribed subnets from the metadata attnets
-
-	// Get the long-lived subnets from epoch & nodeID
-	// data, err := p2p.ComputeSubscribedSubnets(nodeID, primitives.Epoch(event.Epoch))
-	// computedLongLived := convertUint64ToInt64(data)
-	// if err != nil {
-	// 	log.Err(err).Msg("Error computing subscribed subnets")
-	// }
-
 	// Extract the long lived subnets from the metadata
 	longLived := indexesFromBitfield(event.MetaData.Attnets)
 
@@ -415,11 +373,3 @@ func storeMetadataReceivedEvent(pw *writer.ParquetWriter, event ethereum.Metadat
 		log.Trace().Msg("Wrote metadata_received event to Parquet file")
 	}
 }
-
-// func convertUint64ToInt64(uintSlice []uint64) []int64 {
-// 	intSlice := make([]int64, len(uintSlice))
-// 	for i, v := range uintSlice {
-// 		intSlice[i] = int64(v)
-// 	}
-// 	return intSlice
-// }
