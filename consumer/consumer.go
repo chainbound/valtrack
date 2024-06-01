@@ -7,12 +7,15 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
+	ch "github.com/chainbound/valtrack/clickhouse"
 	"github.com/chainbound/valtrack/log"
 	"github.com/chainbound/valtrack/pkg/ethereum"
 	"github.com/google/uuid"
+	ma "github.com/multiformats/go-multiaddr"
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
 	"github.com/prysmaticlabs/go-bitfield"
@@ -28,8 +31,10 @@ type Consumer struct {
 	validatorWriter        *writer.ParquetWriter
 	js                     jetstream.JetStream
 
-	peerDiscoveredChan   chan *ethereum.PeerDiscoveredEvent
-	metadataReceivedChan chan *ethereum.MetadataReceivedEvent
+	validatorMetadataChan chan *ethereum.MetadataReceivedEvent
+	validatorCache        map[string]*ch.ValidatorMetadataEvent
+
+	chClient *ch.ClickhouseClient
 }
 
 type ParquetPeerDiscoveredEvent struct {
@@ -142,6 +147,20 @@ func RunConsumer(natsURL string) {
 		}
 	}()
 
+	chCfg := ch.ClickhouseConfig{
+		Endpoint: "",
+		DB:       "default",
+		Username: "default",
+		Password: "",
+
+		MaxValidatorBatchSize: 10,
+	}
+
+	chClient, err := ch.NewClickhouseClient(&chCfg)
+	if err != nil {
+		log.Fatal().Err(err).Msg("Error creating Clickhouse client")
+	}
+
 	consumer := Consumer{
 		log:                    log,
 		peerDiscoveredWriter:   peerDiscoveredWriter,
@@ -149,8 +168,10 @@ func RunConsumer(natsURL string) {
 		validatorWriter:        validatorWriter,
 		js:                     js,
 
-		peerDiscoveredChan:   make(chan *ethereum.PeerDiscoveredEvent, 1024),
-		metadataReceivedChan: make(chan *ethereum.MetadataReceivedEvent, 1024),
+		validatorMetadataChan: make(chan *ethereum.MetadataReceivedEvent, 1000),
+		validatorCache:        make(map[string]*ch.ValidatorMetadataEvent),
+
+		chClient: chClient,
 	}
 
 	go func() {
@@ -159,6 +180,8 @@ func RunConsumer(natsURL string) {
 		}
 	}()
 
+	go consumer.HandleValidatorMetadataEvent()
+
 	// Gracefully shutdown
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, os.Interrupt, syscall.SIGTERM, syscall.SIGINT)
@@ -166,6 +189,12 @@ func RunConsumer(natsURL string) {
 }
 
 func (c *Consumer) Start() error {
+	err := c.chClient.Start()
+	if err != nil {
+		c.log.Error().Err(err).Msg("Error starting Clickhouse client")
+		return err
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
@@ -227,11 +256,6 @@ func handleMessage(c *Consumer, msg jetstream.Msg) {
 			return
 		}
 		c.log.Info().Any("seq", MsgMetadata.Sequence).Any("event", event).Msg("peer_discovered")
-		select {
-		case c.peerDiscoveredChan <- &event:
-			c.log.Debug().Msg("Sent peer_discovered event to channel")
-		default:
-		}
 		storePeerDiscoveredEvent(c.peerDiscoveredWriter, event, c.log)
 
 	case "events.metadata_received":
@@ -242,11 +266,7 @@ func handleMessage(c *Consumer, msg jetstream.Msg) {
 			return
 		}
 		c.log.Info().Any("seq", MsgMetadata.Sequence).Any("event", event).Msg("metadata_received")
-		select {
-		case c.metadataReceivedChan <- &event:
-			c.log.Debug().Msg("Sent metadata_received event to channel")
-		default:
-		}
+		c.validatorMetadataChan <- &event
 		storeValidatorEvent(c.validatorWriter, event, c.log)
 		storeMetadataReceivedEvent(c.metadataReceivedWriter, event, c.log)
 
@@ -372,4 +392,85 @@ func storeMetadataReceivedEvent(pw *writer.ParquetWriter, event ethereum.Metadat
 	} else {
 		log.Trace().Msg("Wrote metadata_received event to Parquet file")
 	}
+}
+
+func (c *Consumer) HandleValidatorMetadataEvent() error {
+	for {
+		select {
+		case event := <-c.validatorMetadataChan:
+			c.log.Info().Any("event", event).Msg("Received validator event")
+
+			maddr, err := ma.NewMultiaddr(event.Multiaddr)
+			if err != nil {
+				c.log.Error().Err(err).Msg("Invalid multiaddr")
+				continue
+			}
+
+			ip, err := maddr.ValueForProtocol(ma.P_IP4)
+			if err != nil {
+				c.log.Error().Err(err).Msg("Invalid IP in multiaddr")
+				continue
+			}
+
+			portStr, err := maddr.ValueForProtocol(ma.P_TCP)
+			if err != nil {
+				c.log.Error().Err(err).Msg("Invalid port in multiaddr")
+				continue
+			}
+
+			port, err := strconv.Atoi(portStr)
+			if err != nil {
+				c.log.Error().Err(err).Msg("Invalid port number")
+				continue
+			}
+
+			isValidator := 1
+			longLived := indexesFromBitfield(event.MetaData.Attnets)
+			shortLived := extractShortLivedSubnets(event.SubscribedSubnets, longLived)
+			if len(shortLived) == 0 {
+				isValidator = 0
+			}
+
+			prevCache, found := c.validatorCache[event.ID]
+			prevNumObservations := uint64(0)
+			prevAvgValidatorCount := int32(0)
+			if found {
+				prevNumObservations = prevCache.NumObservations
+				prevAvgValidatorCount = prevCache.AverageValidatorCount
+			}
+
+			currValidatorCount := 1 + (len(shortLived)-1)/2
+			currAvgValidatorCount := ComputeNewAvg(prevAvgValidatorCount, prevNumObservations, currValidatorCount)
+			if len(shortLived) == 0 {
+				currValidatorCount = 0
+				currAvgValidatorCount = prevAvgValidatorCount
+			}
+
+			validatorMetadata := ch.ValidatorMetadataEvent{
+				PeerID:                event.ID,
+				ENR:                   event.ENR,
+				Multiaddr:             event.Multiaddr,
+				IP:                    ip,
+				Port:                  uint16(port),
+				LastSeen:              uint64(event.Timestamp),
+				LastEpoch:             uint64(event.Epoch),
+				PossibleValidator:     uint8(isValidator),
+				AverageValidatorCount: currAvgValidatorCount,
+				NumObservations:       prevNumObservations + 1,
+			}
+			c.log.Info().Any("validator_metadata", validatorMetadata).Msg("Inserted validator metadata")
+
+			c.validatorCache[event.ID] = &validatorMetadata
+
+			// Write to Clickhouse
+			c.chClient.InsertValidatorMetadata(&validatorMetadata)
+		default:
+			c.log.Debug().Msg("No validator metadata event")
+			time.Sleep(1 * time.Second) // Prevents busy waiting
+		}
+	}
+}
+
+func ComputeNewAvg(prevAvg int32, prevCount uint64, currValidatorCount int) int32 {
+	return int32((int64(prevCount)*int64(prevAvg) + int64(currValidatorCount)) / int64(prevCount+1))
 }

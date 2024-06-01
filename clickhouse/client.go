@@ -36,7 +36,7 @@ type ValidatorMetadataEvent struct {
 	Port                  uint16 `ch:"port"`
 	LastSeen              uint64 `ch:"last_seen"`
 	LastEpoch             uint64 `ch:"last_epoch"`
-	PossibleValidator     uint8  `ch:"possible_validator"`
+	PossibleValidator     uint8  `ch:"possible_validator"` // Using uint as bool
 	AverageValidatorCount int32  `ch:"average_validator_count"`
 	NumObservations       uint64 `ch:"num_observations"`
 }
@@ -164,4 +164,8 @@ func (c *ClickhouseClient) validatorEventBatcher() {
 			}
 		}
 	}
+}
+
+func (c *ClickhouseClient) InsertValidatorMetadata(event *ValidatorMetadataEvent) {
+	c.validatorEventChan <- event
 }
