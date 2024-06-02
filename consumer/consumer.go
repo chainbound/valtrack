@@ -416,12 +416,11 @@ func (c *Consumer) HandleValidatorMetadataEvent() error {
 			}
 
 			currValidatorCount := 1 + (len(shortLived)-1)/2
-			currAvgValidatorCount := ComputeNewAvg(prevAvgValidatorCount, prevNumObservations, currValidatorCount)
-			// If there are no short lived subnets, then the validator count is 0 and the average is the same as the previous
+			// If there are no short lived subnets, then the validator count is 0
 			if len(shortLived) == 0 {
 				currValidatorCount = 0
-				currAvgValidatorCount = prevAvgValidatorCount
 			}
+			currAvgValidatorCount := ComputeNewAvg(prevAvgValidatorCount, prevNumObservations, currValidatorCount)
 
 			validatorMetadata := ch.ValidatorMetadataEvent{
 				PeerID:                event.ID,
