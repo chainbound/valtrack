@@ -5,6 +5,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/chainbound/valtrack/types"
 	"github.com/ethereum/go-ethereum/p2p/enode"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/multiformats/go-multiaddr"
@@ -43,14 +44,14 @@ type PeerInfo struct {
 	backoffCounter uint32
 }
 
-func (p *PeerInfo) IntoMetadataEvent() *MetadataReceivedEvent {
-	simpleMetadata := &SimpleMetaData{
+func (p *PeerInfo) IntoMetadataEvent() *types.MetadataReceivedEvent {
+	simpleMetadata := &types.SimpleMetaData{
 		SeqNumber: int64(p.metadata.SeqNumber),
 		Attnets:   hex.EncodeToString(p.metadata.Attnets),
 		Syncnets:  hex.EncodeToString(p.metadata.Syncnets),
 	}
 
-	return &MetadataReceivedEvent{
+	return &types.MetadataReceivedEvent{
 		ENR:           p.enode.String(),
 		ID:            p.id.String(),
 		Multiaddr:     p.remoteAddr.String(),

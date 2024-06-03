@@ -7,40 +7,12 @@ import (
 	"os"
 	"time"
 
+	"github.com/chainbound/valtrack/types"
 	"github.com/ethereum/go-ethereum/p2p/enode"
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
 	"github.com/pkg/errors"
 )
-
-type PeerDiscoveredEvent struct {
-	ENR        string `parquet:"name=enr, type=BYTE_ARRAY, convertedtype=UTF8" json:"enr" ch:"enr"`
-	ID         string `parquet:"name=id, type=BYTE_ARRAY, convertedtype=UTF8" json:"id" ch:"id"`
-	IP         string `parquet:"name=ip, type=BYTE_ARRAY, convertedtype=UTF8" json:"ip" ch:"ip"`
-	Port       int    `parquet:"name=port, type=INT32" json:"port" ch:"port"`
-	CrawlerID  string `parquet:"name=crawler_id, type=BYTE_ARRAY, convertedtype=UTF8" json:"crawler_id" ch:"crawler_id"`
-	CrawlerLoc string `parquet:"name=crawler_location, type=BYTE_ARRAY, convertedtype=UTF8" json:"crawler_location" ch:"crawler_location"`
-	Timestamp  int64  `parquet:"name=timestamp, type=INT64" json:"timestamp" ch:"timestamp"`
-}
-
-type MetadataReceivedEvent struct {
-	ENR               string          `parquet:"name=enr, type=BYTE_ARRAY, convertedtype=UTF8" json:"enr" ch:"enr"`
-	ID                string          `parquet:"name=id, type=BYTE_ARRAY, convertedtype=UTF8" json:"id" ch:"id"`
-	Multiaddr         string          `parquet:"name=multiaddr, type=BYTE_ARRAY, convertedtype=UTF8" json:"multiaddr" ch:"multiaddr"`
-	Epoch             int             `parquet:"name=epoch, type=INT32" json:"epoch" ch:"epoch"`
-	MetaData          *SimpleMetaData `parquet:"name=metadata, type=BYTE_ARRAY, convertedtype=UTF8" json:"metadata" ch:"metadata"`
-	SubscribedSubnets []int64         `parquet:"name=subscribed_subnets, type=LIST, valuetype=INT64" json:"subscribed_subnets" ch:"subscribed_subnets"`
-	ClientVersion     string          `parquet:"name=client_version, type=BYTE_ARRAY, convertedtype=UTF8" json:"client_version" ch:"client_version"`
-	CrawlerID         string          `parquet:"name=crawler_id, type=BYTE_ARRAY, convertedtype=UTF8" json:"crawler_id" ch:"crawler_id"`
-	CrawlerLoc        string          `parquet:"name=crawler_location, type=BYTE_ARRAY, convertedtype=UTF8" json:"crawler_location" ch:"crawler_location"`
-	Timestamp         int64           `parquet:"name=timestamp, type=INT64" json:"timestamp" ch:"timestamp"`
-}
-
-type SimpleMetaData struct {
-	SeqNumber int64  `parquet:"name=seq_number, type=INT64" json:"seq_number" ch:"seq_number"`
-	Attnets   string `parquet:"name=attnets, type=BYTE_ARRAY, convertedtype=UTF8" json:"attnets" ch:"attnets"`
-	Syncnets  string `parquet:"name=syncnets, type=BYTE_ARRAY, convertedtype=UTF8" json:"syncnets" ch:"syncnets"`
-}
 
 func createNatsStream(url string) (js jetstream.JetStream, err error) {
 	// If empty URL and empty env variable, return nil and run without NATS
@@ -76,7 +48,7 @@ func createNatsStream(url string) (js jetstream.JetStream, err error) {
 	return js, nil
 }
 
-func (n *Node) sendMetadataEvent(ctx context.Context, event *MetadataReceivedEvent) {
+func (n *Node) sendMetadataEvent(ctx context.Context, event *types.MetadataReceivedEvent) {
 	event.CrawlerID = getCrawlerMachineID()
 	event.CrawlerLoc = getCrawlerLocation()
 
@@ -121,7 +93,7 @@ func (n *Node) startMetadataPublisher() {
 }
 
 func (d *DiscoveryV5) sendPeerEvent(ctx context.Context, node *enode.Node, hInfo *HostInfo) {
-	peerEvent := &PeerDiscoveredEvent{
+	peerEvent := &types.PeerDiscoveredEvent{
 		ENR:        node.String(),
 		ID:         hInfo.ID.String(),
 		IP:         hInfo.IP,

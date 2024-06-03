@@ -10,6 +10,7 @@ import (
 
 	"github.com/chainbound/valtrack/config"
 	"github.com/chainbound/valtrack/log"
+	"github.com/chainbound/valtrack/types"
 	gcrypto "github.com/ethereum/go-ethereum/crypto"
 	"github.com/libp2p/go-libp2p"
 	mplex "github.com/libp2p/go-libp2p-mplex"
@@ -49,7 +50,7 @@ type Node struct {
 	js                jetstream.JetStream
 	log               zerolog.Logger
 	fileLogger        *os.File
-	metadataEventChan chan *MetadataReceivedEvent
+	metadataEventChan chan *types.MetadataReceivedEvent
 	reconnectChan     chan peer.AddrInfo
 }
 
@@ -135,7 +136,7 @@ func NewNode(cfg *config.NodeConfig) (*Node, error) {
 		log:               log,
 		fileLogger:        file,
 		peerstore:         peerstore,
-		metadataEventChan: make(chan *MetadataReceivedEvent, 100),
+		metadataEventChan: make(chan *types.MetadataReceivedEvent, 100),
 		reconnectChan:     make(chan peer.AddrInfo, 100),
 	}, nil
 }

@@ -6,15 +6,13 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"strconv"
 	"syscall"
 	"time"
 
 	"github.com/chainbound/valtrack/clickhouse"
 	ch "github.com/chainbound/valtrack/clickhouse"
 	"github.com/chainbound/valtrack/log"
-	eth "github.com/chainbound/valtrack/pkg/ethereum"
-	ma "github.com/multiformats/go-multiaddr"
+	"github.com/chainbound/valtrack/types"
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
 	"github.com/rs/zerolog"
@@ -36,24 +34,10 @@ type Consumer struct {
 	validatorWriter        *writer.ParquetWriter
 	js                     jetstream.JetStream
 
-	validatorMetadataChan chan *eth.MetadataReceivedEvent
-	validatorCache        map[string]*ch.ValidatorMetadataEvent
+	validatorMetadataChan chan *types.MetadataReceivedEvent
+	// validatorCache        map[string]*ch.ValidatorMetadataEvent
 
 	chClient *ch.ClickhouseClient
-}
-
-type ParquetValidatorEvent struct {
-	ENR               string              `parquet:"name=enr, type=BYTE_ARRAY, convertedtype=UTF8"`
-	ID                string              `parquet:"name=id, type=BYTE_ARRAY, convertedtype=UTF8"`
-	Multiaddr         string              `parquet:"name=multiaddr, type=BYTE_ARRAY, convertedtype=UTF8"`
-	Epoch             int                 `parquet:"name=epoch, type=INT32"`
-	MetaData          *eth.SimpleMetaData `parquet:"name=metadata, type=BYTE_ARRAY, convertedtype=UTF8"`
-	LongLivedSubnets  []int64             `parquet:"name=long_lived_subnets, type=LIST, valuetype=INT64"`
-	SubscribedSubnets []int64             `parquet:"name=subscribed_subnets, type=LIST, valuetype=INT64"`
-	ClientVersion     string              `parquet:"name=client_version, type=BYTE_ARRAY, convertedtype=UTF8"`
-	CrawlerID         string              `parquet:"name=crawler_id, type=BYTE_ARRAY, convertedtype=UTF8"`
-	CrawlerLoc        string              `parquet:"name=crawler_location, type=BYTE_ARRAY, convertedtype=UTF8"`
-	Timestamp         int64               `parquet:"name=timestamp, type=INT64"`
 }
 
 func RunConsumer(cfg *ConsumerConfig) {
@@ -88,7 +72,7 @@ func RunConsumer(cfg *ConsumerConfig) {
 	}
 	defer w_validator.Close()
 
-	metadataReceivedWriter, err := writer.NewParquetWriter(w_metadata, new(eth.MetadataReceivedEvent), 4)
+	metadataReceivedWriter, err := writer.NewParquetWriter(w_metadata, new(types.MetadataReceivedEvent), 4)
 	if err != nil {
 		log.Fatal().Err(err).Msg("Error creating Metadata Parquet writer")
 	}
@@ -100,7 +84,7 @@ func RunConsumer(cfg *ConsumerConfig) {
 		}
 	}()
 
-	peerDiscoveredWriter, err := writer.NewParquetWriter(w_peer, new(eth.PeerDiscoveredEvent), 4)
+	peerDiscoveredWriter, err := writer.NewParquetWriter(w_peer, new(types.PeerDiscoveredEvent), 4)
 	if err != nil {
 		log.Fatal().Err(err).Msg("Error creating Peer discovered Parquet writer")
 	}
@@ -112,7 +96,7 @@ func RunConsumer(cfg *ConsumerConfig) {
 		}
 	}()
 
-	validatorWriter, err := writer.NewParquetWriter(w_validator, new(ParquetValidatorEvent), 4)
+	validatorWriter, err := writer.NewParquetWriter(w_validator, new(types.ValidatorEvent), 4)
 	if err != nil {
 		log.Fatal().Err(err).Msg("Error creating Validator Parquet writer")
 	}
@@ -153,8 +137,8 @@ func RunConsumer(cfg *ConsumerConfig) {
 		validatorWriter:        validatorWriter,
 		js:                     js,
 
-		validatorMetadataChan: make(chan *eth.MetadataReceivedEvent, 16384),
-		validatorCache:        make(map[string]*ch.ValidatorMetadataEvent),
+		validatorMetadataChan: make(chan *types.MetadataReceivedEvent, 16384),
+		// validatorCache:        make(map[string]*ch.ValidatorMetadataEvent),
 
 		chClient: chClient,
 	}
@@ -165,7 +149,7 @@ func RunConsumer(cfg *ConsumerConfig) {
 		}
 	}()
 
-	go consumer.HandleValidatorMetadataEvent()
+	// go consumer.HandleValidatorMetadataEvent()
 
 	// Gracefully shutdown
 	quit := make(chan os.Signal, 1)
@@ -225,7 +209,7 @@ func handleMessage(c *Consumer, msg jetstream.Msg) {
 	MsgMetadata, _ := msg.Metadata()
 	switch msg.Subject() {
 	case "events.peer_discovered":
-		var event eth.PeerDiscoveredEvent
+		var event types.PeerDiscoveredEvent
 		if err := json.Unmarshal(msg.Data(), &event); err != nil {
 			c.log.Err(err).Msg("Error unmarshaling PeerDiscoveredEvent")
 			msg.Term()
@@ -235,7 +219,7 @@ func handleMessage(c *Consumer, msg jetstream.Msg) {
 		storePeerDiscoveredEvent(c.peerDiscoveredWriter, event, c.log)
 
 	case "events.metadata_received":
-		var event eth.MetadataReceivedEvent
+		var event types.MetadataReceivedEvent
 		if err := json.Unmarshal(msg.Data(), &event); err != nil {
 			c.log.Err(err).Msg("Error unmarshaling MetadataReceivedEvent")
 			msg.Term()
@@ -255,7 +239,7 @@ func handleMessage(c *Consumer, msg jetstream.Msg) {
 	}
 }
 
-func storeValidatorEvent(pw *writer.ParquetWriter, event eth.MetadataReceivedEvent, log zerolog.Logger) {
+func storeValidatorEvent(pw *writer.ParquetWriter, event types.MetadataReceivedEvent, log zerolog.Logger) {
 	// Extract the long lived subnets from the metadata
 	longLived := indexesFromBitfield(event.MetaData.Attnets)
 
@@ -267,11 +251,11 @@ func storeValidatorEvent(pw *writer.ParquetWriter, event eth.MetadataReceivedEve
 		return
 	}
 
-	parquetEvent := ParquetValidatorEvent{
+	parquetEvent := types.ValidatorEvent{
 		ENR:               event.ENR,
 		ID:                event.ID,
 		Multiaddr:         event.Multiaddr,
-		Epoch:             int(event.Epoch),
+		Epoch:             event.Epoch,
 		MetaData:          event.MetaData,
 		ClientVersion:     event.ClientVersion,
 		CrawlerID:         event.CrawlerID,
@@ -288,7 +272,7 @@ func storeValidatorEvent(pw *writer.ParquetWriter, event eth.MetadataReceivedEve
 	}
 }
 
-func storePeerDiscoveredEvent(pw *writer.ParquetWriter, event eth.PeerDiscoveredEvent, log zerolog.Logger) {
+func storePeerDiscoveredEvent(pw *writer.ParquetWriter, event types.PeerDiscoveredEvent, log zerolog.Logger) {
 	if err := pw.Write(event); err != nil {
 		log.Err(err).Msg("Failed to write peer_discovered event to Parquet file")
 	} else {
@@ -296,7 +280,7 @@ func storePeerDiscoveredEvent(pw *writer.ParquetWriter, event eth.PeerDiscovered
 	}
 }
 
-func storeMetadataReceivedEvent(pw *writer.ParquetWriter, event eth.MetadataReceivedEvent, log zerolog.Logger) {
+func storeMetadataReceivedEvent(pw *writer.ParquetWriter, event types.MetadataReceivedEvent, log zerolog.Logger) {
 	if err := pw.Write(event); err != nil {
 		log.Err(err).Msg("Failed to write metadata_received event to Parquet file")
 	} else {
@@ -304,85 +288,85 @@ func storeMetadataReceivedEvent(pw *writer.ParquetWriter, event eth.MetadataRece
 	}
 }
 
-func (c *Consumer) HandleValidatorMetadataEvent() error {
-	for {
-		select {
-		case event := <-c.validatorMetadataChan:
-			c.log.Trace().Any("event", event).Msg("Received validator event")
+// func (c *Consumer) HandleValidatorMetadataEvent() error {
+// 	for {
+// 		select {
+// 		case event := <-c.validatorMetadataChan:
+// 			c.log.Trace().Any("event", event).Msg("Received validator event")
 
-			maddr, err := ma.NewMultiaddr(event.Multiaddr)
-			if err != nil {
-				c.log.Error().Err(err).Msg("Invalid multiaddr")
-				continue
-			}
+// 			maddr, err := ma.NewMultiaddr(event.Multiaddr)
+// 			if err != nil {
+// 				c.log.Error().Err(err).Msg("Invalid multiaddr")
+// 				continue
+// 			}
 
-			ip, err := maddr.ValueForProtocol(ma.P_IP4)
-			if err != nil {
-				ip, err = maddr.ValueForProtocol(ma.P_IP6)
-				if err != nil {
-					c.log.Error().Err(err).Msg("Invalid IP in multiaddr")
-					continue
-				}
-			}
+// 			ip, err := maddr.ValueForProtocol(ma.P_IP4)
+// 			if err != nil {
+// 				ip, err = maddr.ValueForProtocol(ma.P_IP6)
+// 				if err != nil {
+// 					c.log.Error().Err(err).Msg("Invalid IP in multiaddr")
+// 					continue
+// 				}
+// 			}
 
-			portStr, err := maddr.ValueForProtocol(ma.P_TCP)
-			if err != nil {
-				c.log.Error().Err(err).Msg("Invalid port in multiaddr")
-				continue
-			}
+// 			portStr, err := maddr.ValueForProtocol(ma.P_TCP)
+// 			if err != nil {
+// 				c.log.Error().Err(err).Msg("Invalid port in multiaddr")
+// 				continue
+// 			}
 
-			port, err := strconv.Atoi(portStr)
-			if err != nil {
-				c.log.Error().Err(err).Msg("Invalid port number")
-				continue
-			}
+// 			port, err := strconv.Atoi(portStr)
+// 			if err != nil {
+// 				c.log.Error().Err(err).Msg("Invalid port number")
+// 				continue
+// 			}
 
-			isValidator := true
-			longLived := indexesFromBitfield(event.MetaData.Attnets)
-			shortLived := extractShortLivedSubnets(event.SubscribedSubnets, longLived)
-			// If there are no short lived subnets, then the peer is not a validator
-			if len(shortLived) == 0 {
-				isValidator = false
-			}
+// 			isValidator := true
+// 			longLived := indexesFromBitfield(event.MetaData.Attnets)
+// 			shortLived := extractShortLivedSubnets(event.SubscribedSubnets, longLived)
+// 			// If there are no short lived subnets, then the peer is not a validator
+// 			if len(shortLived) == 0 {
+// 				isValidator = false
+// 			}
 
-			prevCache, found := c.validatorCache[event.ID]
-			prevNumObservations := uint64(0)
-			prevAvgValidatorCount := int32(0)
-			if found {
-				prevNumObservations = prevCache.NumObservations
-				prevAvgValidatorCount = prevCache.AverageValidatorCount
-			}
+// 			prevCache, found := c.validatorCache[event.ID]
+// 			prevNumObservations := uint64(0)
+// 			prevAvgValidatorCount := int32(0)
+// 			if found {
+// 				prevNumObservations = prevCache.NumObservations
+// 				prevAvgValidatorCount = prevCache.AverageValidatorCount
+// 			}
 
-			currValidatorCount := 1 + (len(shortLived)-1)/2
-			// If there are no short lived subnets, then the validator count is 0
-			if len(shortLived) == 0 {
-				currValidatorCount = 0
-			}
-			currAvgValidatorCount := ComputeNewAvg(prevAvgValidatorCount, prevNumObservations, currValidatorCount)
+// 			currValidatorCount := 1 + (len(shortLived)-1)/2
+// 			// If there are no short lived subnets, then the validator count is 0
+// 			if len(shortLived) == 0 {
+// 				currValidatorCount = 0
+// 			}
+// 			currAvgValidatorCount := ComputeNewAvg(prevAvgValidatorCount, prevNumObservations, currValidatorCount)
 
-			validatorMetadata := ch.ValidatorMetadataEvent{
-				PeerID:                event.ID,
-				ENR:                   event.ENR,
-				Multiaddr:             event.Multiaddr,
-				IP:                    ip,
-				Port:                  uint16(port),
-				LastSeen:              uint64(event.Timestamp),
-				LastEpoch:             uint64(event.Epoch),
-				PossibleValidator:     isValidator,
-				AverageValidatorCount: currAvgValidatorCount,
-				NumObservations:       prevNumObservations + 1,
-			}
+// 			validatorMetadata := ch.ValidatorMetadataEvent{
+// 				PeerID:                event.ID,
+// 				ENR:                   event.ENR,
+// 				Multiaddr:             event.Multiaddr,
+// 				IP:                    ip,
+// 				Port:                  uint16(port),
+// 				LastSeen:              uint64(event.Timestamp),
+// 				LastEpoch:             uint64(event.Epoch),
+// 				PossibleValidator:     isValidator,
+// 				AverageValidatorCount: currAvgValidatorCount,
+// 				NumObservations:       prevNumObservations + 1,
+// 			}
 
-			c.validatorCache[event.ID] = &validatorMetadata
+// 			c.validatorCache[event.ID] = &validatorMetadata
 
-			// Write to Clickhouse
-			if c.chClient != nil {
-				c.chClient.ValidatorEventChan <- &validatorMetadata
-				c.log.Trace().Any("validator_metadata", validatorMetadata).Msg("Inserted validator metadata")
-			}
-		default:
-			c.log.Debug().Msg("No validator metadata event")
-			time.Sleep(1 * time.Second) // Prevents busy waiting
-		}
-	}
-}
+// 			// Write to Clickhouse
+// 			if c.chClient != nil {
+// 				c.chClient.ValidatorEventChan <- &validatorMetadata
+// 				c.log.Trace().Any("validator_metadata", validatorMetadata).Msg("Inserted validator metadata")
+// 			}
+// 		default:
+// 			c.log.Debug().Msg("No validator metadata event")
+// 			time.Sleep(1 * time.Second) // Prevents busy waiting
+// 		}
+// 	}
+// }

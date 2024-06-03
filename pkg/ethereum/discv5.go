@@ -11,6 +11,7 @@ import (
 
 	"github.com/chainbound/valtrack/config"
 	"github.com/chainbound/valtrack/log"
+	"github.com/chainbound/valtrack/types"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/prysmaticlabs/go-bitfield"
 	"github.com/rs/zerolog"
@@ -49,7 +50,7 @@ type DiscoveryV5 struct {
 	fileLogger    *os.File
 	out           chan peer.AddrInfo
 	js            jetstream.JetStream
-	discEventChan chan *PeerDiscoveredEvent
+	discEventChan chan *types.PeerDiscoveredEvent
 }
 
 func NewDiscoveryV5(pk *ecdsa.PrivateKey, discConfig *config.DiscConfig) (*DiscoveryV5, error) {
@@ -136,7 +137,7 @@ func NewDiscoveryV5(pk *ecdsa.PrivateKey, discConfig *config.DiscConfig) (*Disco
 		fileLogger:    file,
 		out:           make(chan peer.AddrInfo, 1024),
 		js:            js,
-		discEventChan: make(chan *PeerDiscoveredEvent, 1024),
+		discEventChan: make(chan *types.PeerDiscoveredEvent, 1024),
 	}, nil
 }
 
