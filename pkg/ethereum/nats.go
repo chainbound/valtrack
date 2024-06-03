@@ -11,7 +11,6 @@ import (
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
 	"github.com/pkg/errors"
-	eth "github.com/prysmaticlabs/prysm/v5/proto/prysm/v1alpha1"
 )
 
 type PeerDiscoveredEvent struct {
@@ -25,16 +24,22 @@ type PeerDiscoveredEvent struct {
 }
 
 type MetadataReceivedEvent struct {
-	ENR               string          `json:"enr"`
-	ID                string          `json:"id"`
-	Multiaddr         string          `json:"multiaddr"`
-	Epoch             int             `json:"epoch"`
-	MetaData          *eth.MetaDataV1 `json:"metadata"`
-	SubscribedSubnets []int64         `json:"subscribed_subnets"`
-	ClientVersion     string          `json:"client_version"`
-	CrawlerID         string          `json:"crawler_id"`
-	CrawlerLoc        string          `json:"crawler_location"`
-	Timestamp         int64           `json:"timestamp"` // Timestamp in UNIX milliseconds
+	ENR               string          `parquet:"name=enr, type=BYTE_ARRAY, convertedtype=UTF8" json:"enr" ch:"enr"`
+	ID                string          `parquet:"name=id, type=BYTE_ARRAY, convertedtype=UTF8" json:"id" ch:"id"`
+	Multiaddr         string          `parquet:"name=multiaddr, type=BYTE_ARRAY, convertedtype=UTF8" json:"multiaddr" ch:"multiaddr"`
+	Epoch             int             `parquet:"name=epoch, type=INT32" json:"epoch" ch:"epoch"`
+	MetaData          *SimpleMetaData `parquet:"name=metadata, type=BYTE_ARRAY, convertedtype=UTF8" json:"metadata" ch:"metadata"`
+	SubscribedSubnets []int64         `parquet:"name=subscribed_subnets, type=LIST, valuetype=INT64" json:"subscribed_subnets" ch:"subscribed_subnets"`
+	ClientVersion     string          `parquet:"name=client_version, type=BYTE_ARRAY, convertedtype=UTF8" json:"client_version" ch:"client_version"`
+	CrawlerID         string          `parquet:"name=crawler_id, type=BYTE_ARRAY, convertedtype=UTF8" json:"crawler_id" ch:"crawler_id"`
+	CrawlerLoc        string          `parquet:"name=crawler_location, type=BYTE_ARRAY, convertedtype=UTF8" json:"crawler_location" ch:"crawler_location"`
+	Timestamp         int64           `parquet:"name=timestamp, type=INT64" json:"timestamp" ch:"timestamp"`
+}
+
+type SimpleMetaData struct {
+	SeqNumber int64  `parquet:"name=seq_number, type=INT64" json:"seq_number" ch:"seq_number"`
+	Attnets   string `parquet:"name=attnets, type=BYTE_ARRAY, convertedtype=UTF8" json:"attnets" ch:"attnets"`
+	Syncnets  string `parquet:"name=syncnets, type=BYTE_ARRAY, convertedtype=UTF8" json:"syncnets" ch:"syncnets"`
 }
 
 func createNatsStream(url string) (js jetstream.JetStream, err error) {

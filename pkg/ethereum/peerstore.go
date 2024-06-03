@@ -1,6 +1,7 @@
 package ethereum
 
 import (
+	"encoding/hex"
 	"sync"
 	"time"
 
@@ -43,12 +44,18 @@ type PeerInfo struct {
 }
 
 func (p *PeerInfo) IntoMetadataEvent() *MetadataReceivedEvent {
+	simpleMetadata := &SimpleMetaData{
+		SeqNumber: int64(p.metadata.SeqNumber),
+		Attnets:   hex.EncodeToString(p.metadata.Attnets),
+		Syncnets:  hex.EncodeToString(p.metadata.Syncnets),
+	}
+
 	return &MetadataReceivedEvent{
 		ENR:           p.enode.String(),
 		ID:            p.id.String(),
 		Multiaddr:     p.remoteAddr.String(),
 		ClientVersion: p.clientVersion,
-		MetaData:      p.metadata,
+		MetaData:      simpleMetadata,
 		// `epoch = slot // SLOTS_PER_EPOCH`
 		Epoch: int(p.status.HeadSlot) / 32,
 		// These should be set later

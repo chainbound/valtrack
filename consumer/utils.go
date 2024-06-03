@@ -1,8 +1,24 @@
 package consumer
 
-import "github.com/prysmaticlabs/go-bitfield"
+import (
+	"encoding/hex"
 
-func indexesFromBitfield(bitV bitfield.Bitvector64) []int64 {
+	"github.com/prysmaticlabs/go-bitfield"
+)
+
+func stringToBitvector64(str string) (bitfield.Bitvector64, error) {
+	data, err := hex.DecodeString(str)
+	if err != nil {
+		return bitfield.Bitvector64{}, err
+	}
+	var bv bitfield.Bitvector64 = data
+	copy(bv[:], data)
+	return bv, nil
+}
+
+func indexesFromBitfield(bitVStr string) []int64 {
+	bitV, _ := stringToBitvector64(bitVStr)
+
 	indexes := make([]int64, 0, bitV.Len())
 
 	for i := int64(0); i < 64; i++ {
