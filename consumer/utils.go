@@ -16,9 +16,21 @@ func stringToBitvector64(str string) (bitfield.Bitvector64, error) {
 	return bv, nil
 }
 
-func indexesFromBitfield(bitVStr string) []int64 {
+func indexesFromStrBitfield(bitVStr string) []int64 {
 	bitV, _ := stringToBitvector64(bitVStr)
 
+	indexes := make([]int64, 0, bitV.Len())
+
+	for i := int64(0); i < 64; i++ {
+		if bitV.BitAt(uint64(i)) {
+			indexes = append(indexes, i)
+		}
+	}
+
+	return indexes
+}
+
+func indexesFromBitfield(bitV bitfield.Bitvector64) []int64 {
 	indexes := make([]int64, 0, bitV.Len())
 
 	for i := int64(0); i < 64; i++ {

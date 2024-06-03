@@ -279,7 +279,7 @@ func handleMessage(c *Consumer, msg jetstream.Msg) {
 
 func (c *Consumer) storeValidatorEvent(event types.MetadataReceivedEvent) {
 	// Extract the long lived subnets from the metadata
-	longLived := indexesFromBitfield(event.MetaData.Attnets)
+	longLived := indexesFromStrBitfield(event.MetaData.Attnets)
 
 	c.log.Info().Any("long_lived_subnets", longLived).Any("subscribed_subnets", event.SubscribedSubnets).Msg("Checking for validator")
 
@@ -368,7 +368,7 @@ func (c *Consumer) HandleValidatorMetadataEvent() error {
 			}
 
 			isValidator := true
-			longLived := indexesFromBitfield(event.MetaData.Attnets)
+			longLived := indexesFromStrBitfield(event.MetaData.Attnets)
 			shortLived := extractShortLivedSubnets(event.SubscribedSubnets, longLived)
 			// If there are no short lived subnets, then the peer is not a validator
 			if len(shortLived) == 0 {
