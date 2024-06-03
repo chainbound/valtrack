@@ -2,3 +2,4 @@ peerstore.db
 *.log
 *.py
 *.parquet
+*.sqlite
