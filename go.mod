@@ -11,6 +11,7 @@ require (
 	github.com/libp2p/go-libp2p-mplex v0.9.0
 	github.com/libp2p/go-libp2p-pubsub v0.10.1
 	github.com/libp2p/go-mplex v0.7.0
+	github.com/mattn/go-sqlite3 v1.14.22
 	github.com/migalabs/armiarma v1.1.0
 	github.com/multiformats/go-multiaddr v0.12.2
 	github.com/nats-io/nats.go v1.35.0

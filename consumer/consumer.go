@@ -2,10 +2,12 @@ package consumer
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -13,6 +15,8 @@ import (
 	ch "github.com/chainbound/valtrack/clickhouse"
 	"github.com/chainbound/valtrack/log"
 	"github.com/chainbound/valtrack/types"
+	_ "github.com/mattn/go-sqlite3"
+	ma "github.com/multiformats/go-multiaddr"
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
 	"github.com/rs/zerolog"
@@ -35,13 +39,47 @@ type Consumer struct {
 	js                     jetstream.JetStream
 
 	validatorMetadataChan chan *types.MetadataReceivedEvent
-	// validatorCache        map[string]*ch.ValidatorMetadataEvent
 
 	chClient *ch.ClickhouseClient
+	db       *sql.DB
+}
+
+func setupDatabase(db *sql.DB) error {
+	createTableQuery := `
+    CREATE TABLE IF NOT EXISTS validator_tracker (
+        PeerID TEXT PRIMARY KEY,
+        ENR TEXT,
+        Multiaddr TEXT,
+        IP TEXT,
+        Port INTEGER,
+        LastSeen TEXT,
+        LastEpoch INTEGER,
+        PossibleValidator BOOLEAN,
+        AverageValidatorCount INTEGER,
+        NumObservations INTEGER
+    );
+    `
+	_, err := db.Exec(createTableQuery)
+	if err != nil {
+		return err
+	}
+	fmt.Println("Database setup complete.")
+	return nil
 }
 
 func RunConsumer(cfg *ConsumerConfig) {
 	log := log.NewLogger("consumer")
+
+	db, err := sql.Open("sqlite3", "./validator_tracker.sqlite")
+	if err != nil {
+		log.Fatal().Err(err).Msg("Error opening database")
+	}
+	defer db.Close()
+
+	err = setupDatabase(db)
+	if err != nil {
+		log.Fatal().Err(err).Msg("Error setting up database")
+	}
 
 	nc, err := nats.Connect(cfg.NatsURL)
 	if err != nil {
@@ -138,9 +176,9 @@ func RunConsumer(cfg *ConsumerConfig) {
 		js:                     js,
 
 		validatorMetadataChan: make(chan *types.MetadataReceivedEvent, 16384),
-		// validatorCache:        make(map[string]*ch.ValidatorMetadataEvent),
 
 		chClient: chClient,
+		db:       db,
 	}
 
 	go func() {
@@ -149,7 +187,7 @@ func RunConsumer(cfg *ConsumerConfig) {
 		}
 	}()
 
-	// go consumer.HandleValidatorMetadataEvent()
+	go consumer.HandleValidatorMetadataEvent()
 
 	// Gracefully shutdown
 	quit := make(chan os.Signal, 1)
@@ -226,7 +264,7 @@ func handleMessage(c *Consumer, msg jetstream.Msg) {
 			return
 		}
 		c.log.Info().Any("seq", MsgMetadata.Sequence).Any("event", event).Msg("metadata_received")
-		// c.validatorMetadataChan <- &event
+		c.validatorMetadataChan <- &event
 		c.storeValidatorEvent(event)
 		c.storeMetadataReceivedEvent(event)
 
@@ -296,85 +334,87 @@ func (c *Consumer) storeMetadataReceivedEvent(event types.MetadataReceivedEvent)
 	}
 }
 
-// func (c *Consumer) HandleValidatorMetadataEvent() error {
-// 	for {
-// 		select {
-// 		case event := <-c.validatorMetadataChan:
-// 			c.log.Trace().Any("event", event).Msg("Received validator event")
+func (c *Consumer) HandleValidatorMetadataEvent() error {
+	for {
+		select {
+		case event := <-c.validatorMetadataChan:
+			c.log.Trace().Any("event", event).Msg("Received validator event")
 
-// 			maddr, err := ma.NewMultiaddr(event.Multiaddr)
-// 			if err != nil {
-// 				c.log.Error().Err(err).Msg("Invalid multiaddr")
-// 				continue
-// 			}
+			maddr, err := ma.NewMultiaddr(event.Multiaddr)
+			if err != nil {
+				c.log.Error().Err(err).Msg("Invalid multiaddr")
+				continue
+			}
 
-// 			ip, err := maddr.ValueForProtocol(ma.P_IP4)
-// 			if err != nil {
-// 				ip, err = maddr.ValueForProtocol(ma.P_IP6)
-// 				if err != nil {
-// 					c.log.Error().Err(err).Msg("Invalid IP in multiaddr")
-// 					continue
-// 				}
-// 			}
+			ip, err := maddr.ValueForProtocol(ma.P_IP4)
+			if err != nil {
+				ip, err = maddr.ValueForProtocol(ma.P_IP6)
+				if err != nil {
+					c.log.Error().Err(err).Msg("Invalid IP in multiaddr")
+					continue
+				}
+			}
 
-// 			portStr, err := maddr.ValueForProtocol(ma.P_TCP)
-// 			if err != nil {
-// 				c.log.Error().Err(err).Msg("Invalid port in multiaddr")
-// 				continue
-// 			}
+			portStr, err := maddr.ValueForProtocol(ma.P_TCP)
+			if err != nil {
+				c.log.Error().Err(err).Msg("Invalid port in multiaddr")
+				continue
+			}
 
-// 			port, err := strconv.Atoi(portStr)
-// 			if err != nil {
-// 				c.log.Error().Err(err).Msg("Invalid port number")
-// 				continue
-// 			}
+			port, err := strconv.Atoi(portStr)
+			if err != nil {
+				c.log.Error().Err(err).Msg("Invalid port number")
+				continue
+			}
 
-// 			isValidator := true
-// 			longLived := indexesFromBitfield(event.MetaData.Attnets)
-// 			shortLived := extractShortLivedSubnets(event.SubscribedSubnets, longLived)
-// 			// If there are no short lived subnets, then the peer is not a validator
-// 			if len(shortLived) == 0 {
-// 				isValidator = false
-// 			}
+			isValidator := true
+			longLived := indexesFromBitfield(event.MetaData.Attnets)
+			shortLived := extractShortLivedSubnets(event.SubscribedSubnets, longLived)
+			// If there are no short lived subnets, then the peer is not a validator
+			if len(shortLived) == 0 {
+				isValidator = false
+			}
 
-// 			prevCache, found := c.validatorCache[event.ID]
-// 			prevNumObservations := uint64(0)
-// 			prevAvgValidatorCount := int32(0)
-// 			if found {
-// 				prevNumObservations = prevCache.NumObservations
-// 				prevAvgValidatorCount = prevCache.AverageValidatorCount
-// 			}
+			prevNumObservations := uint64(0)
+			prevAvgValidatorCount := int32(0)
+			err = c.db.QueryRow("SELECT NumObservations, AverageValidatorCount FROM validator_tracker WHERE PeerID = ?", event.ID).Scan(&prevNumObservations, &prevAvgValidatorCount)
 
-// 			currValidatorCount := 1 + (len(shortLived)-1)/2
-// 			// If there are no short lived subnets, then the validator count is 0
-// 			if len(shortLived) == 0 {
-// 				currValidatorCount = 0
-// 			}
-// 			currAvgValidatorCount := ComputeNewAvg(prevAvgValidatorCount, prevNumObservations, currValidatorCount)
+			currValidatorCount := 1 + (len(shortLived)-1)/2
+			// If there are no short lived subnets, then the validator count is 0
+			if len(shortLived) == 0 {
+				currValidatorCount = 0
+			}
+			currAvgValidatorCount := ComputeNewAvg(prevAvgValidatorCount, prevNumObservations, currValidatorCount)
 
-// 			validatorMetadata := ch.ValidatorMetadataEvent{
-// 				PeerID:                event.ID,
-// 				ENR:                   event.ENR,
-// 				Multiaddr:             event.Multiaddr,
-// 				IP:                    ip,
-// 				Port:                  uint16(port),
-// 				LastSeen:              uint64(event.Timestamp),
-// 				LastEpoch:             uint64(event.Epoch),
-// 				PossibleValidator:     isValidator,
-// 				AverageValidatorCount: currAvgValidatorCount,
-// 				NumObservations:       prevNumObservations + 1,
-// 			}
-
-// 			c.validatorCache[event.ID] = &validatorMetadata
-
-// 			// Write to Clickhouse
-// 			if c.chClient != nil {
-// 				c.chClient.ValidatorEventChan <- &validatorMetadata
-// 				c.log.Trace().Any("validator_metadata", validatorMetadata).Msg("Inserted validator metadata")
-// 			}
-// 		default:
-// 			c.log.Debug().Msg("No validator metadata event")
-// 			time.Sleep(1 * time.Second) // Prevents busy waiting
-// 		}
-// 	}
-// }
+			if err == sql.ErrNoRows {
+				// Insert new row
+				insertQuery := `
+				INSERT INTO validator_tracker (PeerID, ENR, Multiaddr, IP, Port, LastSeen, LastEpoch, PossibleValidator, AverageValidatorCount, NumObservations)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+				`
+				_, err = c.db.Exec(insertQuery, event.ID, event.ENR, event.Multiaddr, ip, port, event.Timestamp, event.Epoch, isValidator, currAvgValidatorCount, prevNumObservations+1)
+				if err != nil {
+					c.log.Error().Err(err).Msg("Error inserting row")
+				}
+				c.log.Trace().Str("PeerID", event.ID).Msg("Inserted new row")
+			} else if err != nil {
+				c.log.Error().Err(err).Msg("Error querying database")
+			} else {
+				// Update existing row
+				updateQuery := `
+				UPDATE validator_tracker
+				SET ENR = ?, Multiaddr = ?, IP = ?, Port = ?, LastSeen = ?, LastEpoch = ?, PossibleValidator = ?, AverageValidatorCount = ?, NumObservations = ?
+				WHERE PeerID = ?
+				`
+				_, err = c.db.Exec(updateQuery, event.ENR, event.Multiaddr, ip, port, event.Timestamp, event.Epoch, isValidator, currAvgValidatorCount, prevNumObservations+1, event.ID)
+				if err != nil {
+					c.log.Error().Err(err).Msg("Error updating row")
+				}
+				c.log.Trace().Str("PeerID", event.ID).Msg("Updated row")
+			}
+		default:
+			c.log.Debug().Msg("No validator metadata event")
+			time.Sleep(1 * time.Second) // Prevents busy waiting
+		}
+	}
+}
