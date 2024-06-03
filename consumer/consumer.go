@@ -216,7 +216,7 @@ func handleMessage(c *Consumer, msg jetstream.Msg) {
 			return
 		}
 		c.log.Info().Any("seq", MsgMetadata.Sequence).Any("event", event).Msg("peer_discovered")
-		storePeerDiscoveredEvent(c.peerDiscoveredWriter, event, c.log)
+		c.storePeerDiscoveredEvent(event)
 
 	case "events.metadata_received":
 		var event types.MetadataReceivedEvent
@@ -226,9 +226,9 @@ func handleMessage(c *Consumer, msg jetstream.Msg) {
 			return
 		}
 		c.log.Info().Any("seq", MsgMetadata.Sequence).Any("event", event).Msg("metadata_received")
-		c.validatorMetadataChan <- &event
-		storeValidatorEvent(c.validatorWriter, event, c.log)
-		storeMetadataReceivedEvent(c.metadataReceivedWriter, event, c.log)
+		// c.validatorMetadataChan <- &event
+		c.storeValidatorEvent(event)
+		c.storeMetadataReceivedEvent(event)
 
 	default:
 		c.log.Warn().Str("subject", msg.Subject()).Msg("Unknown event type")
@@ -239,11 +239,11 @@ func handleMessage(c *Consumer, msg jetstream.Msg) {
 	}
 }
 
-func storeValidatorEvent(pw *writer.ParquetWriter, event types.MetadataReceivedEvent, log zerolog.Logger) {
+func (c *Consumer) storeValidatorEvent(event types.MetadataReceivedEvent) {
 	// Extract the long lived subnets from the metadata
 	longLived := indexesFromBitfield(event.MetaData.Attnets)
 
-	log.Info().Any("long_lived_subnets", longLived).Any("subscribed_subnets", event.SubscribedSubnets).Msg("Checking for validator")
+	c.log.Info().Any("long_lived_subnets", longLived).Any("subscribed_subnets", event.SubscribedSubnets).Msg("Checking for validator")
 
 	if len(extractShortLivedSubnets(event.SubscribedSubnets, longLived)) == 0 {
 		// If the subscribed subnets and the longLived subnets are the same,
@@ -251,12 +251,15 @@ func storeValidatorEvent(pw *writer.ParquetWriter, event types.MetadataReceivedE
 		return
 	}
 
-	parquetEvent := types.ValidatorEvent{
-		ENR:               event.ENR,
-		ID:                event.ID,
-		Multiaddr:         event.Multiaddr,
-		Epoch:             event.Epoch,
-		MetaData:          event.MetaData,
+	validatorEvent := types.ValidatorEvent{
+		ENR:       event.ENR,
+		ID:        event.ID,
+		Multiaddr: event.Multiaddr,
+		Epoch:     event.Epoch,
+		// MetaData:          event.MetaData,
+		SeqNumber:         event.MetaData.SeqNumber,
+		Attnets:           event.MetaData.Attnets,
+		Syncnets:          event.MetaData.Syncnets,
 		ClientVersion:     event.ClientVersion,
 		CrawlerID:         event.CrawlerID,
 		CrawlerLoc:        event.CrawlerLoc,
@@ -265,26 +268,31 @@ func storeValidatorEvent(pw *writer.ParquetWriter, event types.MetadataReceivedE
 		SubscribedSubnets: event.SubscribedSubnets,
 	}
 
-	if err := pw.Write(parquetEvent); err != nil {
-		log.Err(err).Msg("Failed to write validator event to Parquet file")
+	if c.chClient != nil {
+		c.chClient.ValidatorEventChan <- &validatorEvent
+		c.log.Info().Any("validator_event", validatorEvent).Msg("Inserted validator event")
+	}
+
+	if err := c.validatorWriter.Write(validatorEvent); err != nil {
+		c.log.Err(err).Msg("Failed to write validator event to Parquet file")
 	} else {
-		log.Trace().Msg("Wrote validator event to Parquet file")
+		c.log.Trace().Msg("Wrote validator event to Parquet file")
 	}
 }
 
-func storePeerDiscoveredEvent(pw *writer.ParquetWriter, event types.PeerDiscoveredEvent, log zerolog.Logger) {
-	if err := pw.Write(event); err != nil {
-		log.Err(err).Msg("Failed to write peer_discovered event to Parquet file")
+func (c *Consumer) storePeerDiscoveredEvent(event types.PeerDiscoveredEvent) {
+	if err := c.peerDiscoveredWriter.Write(event); err != nil {
+		c.log.Err(err).Msg("Failed to write peer_discovered event to Parquet file")
 	} else {
-		log.Trace().Msg("Wrote peer_discovered event to Parquet file")
+		c.log.Trace().Msg("Wrote peer_discovered event to Parquet file")
 	}
 }
 
-func storeMetadataReceivedEvent(pw *writer.ParquetWriter, event types.MetadataReceivedEvent, log zerolog.Logger) {
-	if err := pw.Write(event); err != nil {
-		log.Err(err).Msg("Failed to write metadata_received event to Parquet file")
+func (c *Consumer) storeMetadataReceivedEvent(event types.MetadataReceivedEvent) {
+	if err := c.metadataReceivedWriter.Write(event); err != nil {
+		c.log.Err(err).Msg("Failed to write metadata_received event to Parquet file")
 	} else {
-		log.Trace().Msg("Wrote metadata_received event to Parquet file")
+		c.log.Trace().Msg("Wrote metadata_received event to Parquet file")
 	}
 }
 

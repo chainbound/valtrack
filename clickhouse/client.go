@@ -9,36 +9,27 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/chainbound/valtrack/log"
+	"github.com/chainbound/valtrack/types"
 	"github.com/rs/zerolog"
 )
 
 func ValidatorMetadataDDL(db string) string {
 	return fmt.Sprintf(`CREATE TABLE IF NOT EXISTS %s.validator_metadata (
-		peer_id String,
 		enr String,
+		id String,
 		multiaddr String,
-		ip String,
-		port UInt16,
-		last_seen UInt64,
-		last_epoch UInt64,
-		possible_validator Bool,
-		average_validator_count Int32,
-		num_observations UInt64
+		epoch Int32,
+		seq_number Int64,
+		syncnets String,
+		attnets String,
+		long_lived_subnets Array(Int64),
+		subscribed_subnets Array(Int64),
+		client_version String,
+		crawler_id String,
+		crawler_location String,
+		timestamp Int64,
 	) ENGINE = MergeTree()
-PRIMARY KEY (peer_id, last_seen)`, db)
-}
-
-type ValidatorMetadataEvent struct {
-	PeerID                string `ch:"peer_id"`
-	ENR                   string `ch:"enr"`
-	Multiaddr             string `ch:"multiaddr"`
-	IP                    string `ch:"ip"`
-	Port                  uint16 `ch:"port"`
-	LastSeen              uint64 `ch:"last_seen"`
-	LastEpoch             uint64 `ch:"last_epoch"`
-	PossibleValidator     bool   `ch:"possible_validator"`
-	AverageValidatorCount int32  `ch:"average_validator_count"`
-	NumObservations       uint64 `ch:"num_observations"`
+PRIMARY KEY (id, timestamp)`, db)
 }
 
 type ClickhouseConfig struct {
@@ -56,7 +47,7 @@ type ClickhouseClient struct {
 
 	chConn driver.Conn
 
-	ValidatorEventChan chan *ValidatorMetadataEvent
+	ValidatorEventChan chan *types.ValidatorEvent
 }
 
 func NewClickhouseClient(cfg *ClickhouseConfig) (*ClickhouseClient, error) {
@@ -87,7 +78,7 @@ func NewClickhouseClient(cfg *ClickhouseConfig) (*ClickhouseClient, error) {
 		log:    log,
 		chConn: conn,
 
-		ValidatorEventChan: make(chan *ValidatorMetadataEvent, 128),
+		ValidatorEventChan: make(chan *types.ValidatorEvent, 16384),
 	}, nil
 }
 
@@ -132,6 +123,7 @@ func (c *ClickhouseClient) validatorEventBatcher() {
 		}
 
 		count++
+		c.log.Debug().Uint64("count", count).Msg("appended struct to validator_metadata batch")
 
 		if count >= c.cfg.MaxValidatorBatchSize {
 			// Reset counter
