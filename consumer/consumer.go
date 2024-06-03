@@ -43,16 +43,6 @@ type Consumer struct {
 	chClient *ch.ClickhouseClient
 }
 
-type ParquetPeerDiscoveredEvent struct {
-	ENR        string `parquet:"name=enr, type=BYTE_ARRAY, convertedtype=UTF8"`
-	ID         string `parquet:"name=id, type=BYTE_ARRAY, convertedtype=UTF8"`
-	IP         string `parquet:"name=ip, type=BYTE_ARRAY, convertedtype=UTF8"`
-	Port       int    `parquet:"name=port, type=INT32"`
-	CrawlerID  string `parquet:"name=crawler_id, type=BYTE_ARRAY, convertedtype=UTF8"`
-	CrawlerLoc string `parquet:"name=crawler_location, type=BYTE_ARRAY, convertedtype=UTF8"`
-	Timestamp  int64  `parquet:"name=timestamp, type=INT64"`
-}
-
 type ParquetMetadataReceivedEvent struct {
 	ENR           string         `parquet:"name=enr, type=BYTE_ARRAY, convertedtype=UTF8"`
 	ID            string         `parquet:"name=id, type=BYTE_ARRAY, convertedtype=UTF8"`
@@ -129,7 +119,7 @@ func RunConsumer(cfg *ConsumerConfig) {
 		}
 	}()
 
-	peerDiscoveredWriter, err := writer.NewParquetWriter(w_peer, new(ParquetPeerDiscoveredEvent), 4)
+	peerDiscoveredWriter, err := writer.NewParquetWriter(w_peer, new(ethereum.PeerDiscoveredEvent), 4)
 	if err != nil {
 		log.Fatal().Err(err).Msg("Error creating Peer discovered Parquet writer")
 	}
@@ -324,17 +314,7 @@ func storeValidatorEvent(pw *writer.ParquetWriter, event ethereum.MetadataReceiv
 }
 
 func storePeerDiscoveredEvent(pw *writer.ParquetWriter, event ethereum.PeerDiscoveredEvent, log zerolog.Logger) {
-	parquetEvent := ParquetPeerDiscoveredEvent{
-		ENR:        event.ENR,
-		ID:         event.ID,
-		IP:         event.IP,
-		Port:       int(event.Port),
-		CrawlerID:  event.CrawlerID,
-		CrawlerLoc: event.CrawlerLoc,
-		Timestamp:  event.Timestamp,
-	}
-
-	if err := pw.Write(parquetEvent); err != nil {
+	if err := pw.Write(event); err != nil {
 		log.Err(err).Msg("Failed to write peer_discovered event to Parquet file")
 	} else {
 		log.Trace().Msg("Wrote peer_discovered event to Parquet file")

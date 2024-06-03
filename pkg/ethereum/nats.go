@@ -15,13 +15,13 @@ import (
 )
 
 type PeerDiscoveredEvent struct {
-	ENR        string `json:"enr"`
-	ID         string `json:"id"`
-	IP         string `json:"ip"`
-	Port       int    `json:"port"`
-	CrawlerID  string `json:"crawler_id"`
-	CrawlerLoc string `json:"crawler_location"`
-	Timestamp  int64  `json:"timestamp"`
+	ENR        string `parquet:"name=enr, type=BYTE_ARRAY, convertedtype=UTF8" json:"enr" ch:"enr"`
+	ID         string `parquet:"name=id, type=BYTE_ARRAY, convertedtype=UTF8" json:"id" ch:"id"`
+	IP         string `parquet:"name=ip, type=BYTE_ARRAY, convertedtype=UTF8" json:"ip" ch:"ip"`
+	Port       int    `parquet:"name=port, type=INT32" json:"port" ch:"port"`
+	CrawlerID  string `parquet:"name=crawler_id, type=BYTE_ARRAY, convertedtype=UTF8" json:"crawler_id" ch:"crawler_id"`
+	CrawlerLoc string `parquet:"name=crawler_location, type=BYTE_ARRAY, convertedtype=UTF8" json:"crawler_location" ch:"crawler_location"`
+	Timestamp  int64  `parquet:"name=timestamp, type=INT64" json:"timestamp" ch:"timestamp"`
 }
 
 type MetadataReceivedEvent struct {
