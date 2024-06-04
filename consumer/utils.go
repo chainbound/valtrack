@@ -2,6 +2,7 @@ package consumer
 
 import (
 	"encoding/hex"
+	"math"
 
 	"github.com/prysmaticlabs/go-bitfield"
 )
@@ -64,5 +65,8 @@ func contains[T comparable](slice []T, item T) bool {
 }
 
 func ComputeNewAvg(prevAvg int32, prevCount uint64, currValidatorCount int) int32 {
-	return int32((int64(prevCount)*int64(prevAvg) + int64(currValidatorCount)) / int64(prevCount+1))
+	sum := int64(prevCount)*int64(prevAvg) + int64(currValidatorCount)
+	newCount := int64(prevCount + 1)
+	newAvg := float64(sum) / float64(newCount)
+	return int32(math.Round(newAvg))
 }

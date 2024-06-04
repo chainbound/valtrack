@@ -281,7 +281,7 @@ func (c *Consumer) storeValidatorEvent(event types.MetadataReceivedEvent) {
 	// Extract the long lived subnets from the metadata
 	longLived := indexesFromBitfield(event.MetaData.Attnets)
 
-	c.log.Info().Any("long_lived_subnets", longLived).Any("subscribed_subnets", event.SubscribedSubnets).Msg("Checking for validator")
+	c.log.Info().Str("peer", event.ID).Any("long_lived_subnets", longLived).Any("subscribed_subnets", event.SubscribedSubnets).Msg("Checking for validator")
 
 	if len(extractShortLivedSubnets(event.SubscribedSubnets, longLived)) == 0 {
 		// If the subscribed subnets and the longLived subnets are the same,
