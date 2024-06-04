@@ -3,6 +3,7 @@ package consumer
 import (
 	"context"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -290,14 +291,13 @@ func (c *Consumer) storeValidatorEvent(event types.MetadataReceivedEvent) {
 	}
 
 	validatorEvent := types.ValidatorEvent{
-		ENR:       event.ENR,
-		ID:        event.ID,
-		Multiaddr: event.Multiaddr,
-		Epoch:     event.Epoch,
-		// MetaData:          event.MetaData,
+		ENR:               event.ENR,
+		ID:                event.ID,
+		Multiaddr:         event.Multiaddr,
+		Epoch:             event.Epoch,
 		SeqNumber:         event.MetaData.SeqNumber,
-		Attnets:           event.MetaData.Attnets,
-		Syncnets:          event.MetaData.Syncnets,
+		Attnets:           hex.EncodeToString(event.MetaData.Attnets),
+		Syncnets:          hex.EncodeToString(event.MetaData.Syncnets),
 		ClientVersion:     event.ClientVersion,
 		CrawlerID:         event.CrawlerID,
 		CrawlerLoc:        event.CrawlerLoc,
