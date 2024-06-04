@@ -41,7 +41,7 @@ type MetadataReceivedEvent struct {
 }
 
 type SimpleMetaData struct {
-	SeqNumber int64  `parquet:"name=seq_number, type=INT64" json:"seq_number" ch:"metadata.seq_number"`
-	Attnets   string `parquet:"name=attnets, type=BYTE_ARRAY, convertedtype=UTF8" json:"attnets" ch:"metadata.attnets"`
-	Syncnets  string `parquet:"name=syncnets, type=BYTE_ARRAY, convertedtype=UTF8" json:"syncnets" ch:"metadata.syncnets"`
+	SeqNumber int64  `parquet:"name=seq_number, type=INT64" json:"seq_number" ch:"seq_number"`
+	Attnets   string `parquet:"name=attnets, type=BYTE_ARRAY, convertedtype=UTF8" json:"attnets" ch:"attnets"`
+	Syncnets  string `parquet:"name=syncnets, type=BYTE_ARRAY, convertedtype=UTF8" json:"syncnets" ch:"syncnets"`
 }

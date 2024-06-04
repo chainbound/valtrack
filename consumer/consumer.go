@@ -63,7 +63,6 @@ func setupDatabase(db *sql.DB) error {
 	if err != nil {
 		return err
 	}
-	fmt.Println("Database setup complete.")
 	return nil
 }
 
@@ -80,6 +79,7 @@ func RunConsumer(cfg *ConsumerConfig) {
 	if err != nil {
 		log.Fatal().Err(err).Msg("Error setting up database")
 	}
+	log.Info().Msg("Sqlite Database setup complete")
 
 	nc, err := nats.Connect(cfg.NatsURL)
 	if err != nil {

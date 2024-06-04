@@ -3,6 +3,7 @@ package cmd
 import (
 	"github.com/chainbound/valtrack/clickhouse"
 	"github.com/chainbound/valtrack/consumer"
+	"github.com/google/uuid"
 
 	"github.com/rs/zerolog"
 	"github.com/urfave/cli/v2"
@@ -28,7 +29,7 @@ var ConsumerCommand = &cli.Command{
 		&cli.StringFlag{
 			Name:  "name",
 			Usage: "Consumer name",
-			Value: "valtrack-consumer",
+			Value: "consumer-" + uuid.New().String(),
 		},
 		&cli.StringFlag{
 			Name:  "endpoint",
