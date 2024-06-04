@@ -1,7 +1,6 @@
 package ethereum
 
 import (
-	"encoding/hex"
 	"sync"
 	"time"
 
@@ -47,8 +46,8 @@ type PeerInfo struct {
 func (p *PeerInfo) IntoMetadataEvent() *types.MetadataReceivedEvent {
 	simpleMetadata := &types.SimpleMetaData{
 		SeqNumber: int64(p.metadata.SeqNumber),
-		Attnets:   hex.EncodeToString(p.metadata.Attnets),
-		Syncnets:  hex.EncodeToString(p.metadata.Syncnets),
+		Attnets:   p.metadata.Attnets,
+		Syncnets:  p.metadata.Syncnets,
 	}
 
 	return &types.MetadataReceivedEvent{
