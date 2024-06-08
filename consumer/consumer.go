@@ -384,7 +384,7 @@ func (c *Consumer) HandleValidatorMetadataEvent() error {
 			if len(shortLived) == 0 {
 				currValidatorCount = 0
 			}
-			currAvgValidatorCount := ComputeNewAvg(prevAvgValidatorCount, prevNumObservations, currValidatorCount)
+			currAvgValidatorCount := ComputeNewAverage(prevAvgValidatorCount, prevNumObservations, currValidatorCount)
 
 			if err == sql.ErrNoRows {
 				// Insert new row

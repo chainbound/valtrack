@@ -2,8 +2,8 @@ package consumer
 
 import "testing"
 
-func TestComputeNewAvg(t *testing.T) {
-	avg := ComputeNewAvg(1, 10, 0)
+func TestComputeNewAverage(t *testing.T) {
+	avg := ComputeNewAverage(1, 10, 0)
 
 	t.Log("avg", avg)
 }

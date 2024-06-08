@@ -64,7 +64,7 @@ func contains[T comparable](slice []T, item T) bool {
 	return false
 }
 
-func ComputeNewAvg(prevAvg int32, prevCount uint64, currValidatorCount int) int32 {
+func ComputeNewAverage(prevAvg int32, prevCount uint64, currValidatorCount int) int32 {
 	sum := int64(prevCount)*int64(prevAvg) + int64(currValidatorCount)
 	newCount := int64(prevCount + 1)
 	newAvg := float64(sum) / float64(newCount)
