@@ -1,8 +1,14 @@
 package cmd
 
 import (
+	"context"
+	"os"
+	"os/signal"
+	"syscall"
+
 	"github.com/chainbound/valtrack/clickhouse"
 	"github.com/chainbound/valtrack/consumer"
+	"github.com/chainbound/valtrack/discovery"
 	"github.com/google/uuid"
 
 	"github.com/rs/zerolog"
@@ -12,7 +18,7 @@ import (
 var ConsumerCommand = &cli.Command{
 	Name:   "consumer",
 	Usage:  "run the consumer",
-	Action: LaunchConsumer,
+	Action: runConsumer,
 	Flags: []cli.Flag{
 		&cli.StringFlag{
 			Name:    "log-level",
@@ -59,7 +65,27 @@ var ConsumerCommand = &cli.Command{
 	},
 }
 
-func LaunchConsumer(c *cli.Context) error {
+var SentryCommand = &cli.Command{
+	Name:   "sentry",
+	Usage:  "run the sentry node",
+	Action: runSentry,
+	Flags: []cli.Flag{
+		&cli.StringFlag{
+			Name:    "log-level",
+			Usage:   "log level",
+			Aliases: []string{"l"},
+			Value:   "info",
+		},
+		&cli.StringFlag{
+			Name:    "nats-url",
+			Usage:   "NATS server URL (needs JetStream)",
+			Aliases: []string{"n"},
+			Value:   "", // If empty URL, run the sentry without NATS
+		},
+	},
+}
+
+func runConsumer(c *cli.Context) error {
 	cfg := consumer.ConsumerConfig{
 		LogLevel: c.String("log-level"),
 		NatsURL:  c.String("nats-url"),
@@ -77,5 +103,32 @@ func LaunchConsumer(c *cli.Context) error {
 	zerolog.SetGlobalLevel(level)
 
 	consumer.RunConsumer(&cfg)
+	return nil
+}
+
+func runSentry(c *cli.Context) error {
+	level, _ := zerolog.ParseLevel(c.String("log-level"))
+	zerolog.SetGlobalLevel(level)
+
+	disc, err := discovery.NewDiscovery(c.String("nats-url"))
+	if err != nil {
+		panic(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	defer cancel()
+
+	go func() {
+		if err := disc.Start(ctx); err != nil {
+			panic(err)
+		}
+	}()
+
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+
+	<-quit
+
 	return nil
 }
