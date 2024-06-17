@@ -1,6 +1,5 @@
 peerstore.db
 *.log
-*.py
 *.parquet
 *.sqlite
 *.sqlite-journal
