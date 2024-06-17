@@ -13,44 +13,44 @@ import (
 var (
 	createTableQuery = `
     CREATE TABLE IF NOT EXISTS validator_tracker (
-        PeerID TEXT PRIMARY KEY,
-        ENR TEXT,
-        Multiaddr TEXT,
-        IP TEXT,
-        Port INTEGER,
-        LastSeen TEXT,
-        LastEpoch INTEGER,
-		ClientVersion TEXT,
-        PossibleValidator BOOLEAN,
-        AverageValidatorCount INTEGER,
-        NumObservations INTEGER
+        peer_id TEXT PRIMARY KEY,
+        enr TEXT,
+        multiaddr TEXT,
+        ip TEXT,
+        port INTEGER,
+        last_seen TEXT,
+        last_epoch INTEGER,
+		client_version TEXT,
+        possible_validator BOOLEAN,
+        max_validator_count INTEGER,
+        num_observations INTEGER
     );
     `
 	insertQuery = `
-				INSERT INTO validator_tracker (PeerID, ENR, Multiaddr, IP, Port, LastSeen, LastEpoch, ClientVersion, PossibleValidator, AverageValidatorCount, NumObservations)
+				INSERT INTO validator_tracker (peer_id, enr, multiaddr, ip, port, last_seen, last_epoch, client_version, possible_validator, max_validator_count, num_observations)
 				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 	updateQuery = `
 				UPDATE validator_tracker
-				SET ENR = ?, Multiaddr = ?, IP = ?, Port = ?, LastSeen = ?, LastEpoch = ?, ClientVersion = ?, PossibleValidator = ?, AverageValidatorCount = ?, NumObservations = ?
-				WHERE PeerID = ?
+				SET enr = ?, multiaddr = ?, ip = ?, port = ?, last_seen = ?, last_epoch = ?, client_version = ?, possible_validator = ?, max_validator_count = ?, num_observations = ?
+				WHERE peer_id = ?
 				`
 	selectQuery = `
-				SELECT PeerID, ENR, Multiaddr, IP, Port, LastSeen, LastEpoch, ClientVersion, PossibleValidator, AverageValidatorCount, NumObservations 
+				SELECT peer_id, enr, multiaddr, ip, port, last_seen, last_epoch, client_version, possible_validator, max_validator_count, num_observations 
 				FROM validator_tracker`
 )
 
 type ValidatorTracker struct {
-	PeerID                string `json:"peer_id"`
-	ENR                   string `json:"enr"`
-	Multiaddr             string `json:"multiaddr"`
-	IP                    string `json:"ip"`
-	Port                  int    `json:"port"`
-	LastSeen              string `json:"last_seen"`
-	LastEpoch             int    `json:"last_epoch"`
-	ClientVersion         string `json:"client_version"`
-	PossibleValidator     bool   `json:"possible_validator"`
-	AverageValidatorCount int    `json:"average_validator_count"`
-	NumObservations       int    `json:"num_observations"`
+	PeerID            string `json:"peer_id"`
+	ENR               string `json:"enr"`
+	Multiaddr         string `json:"multiaddr"`
+	IP                string `json:"ip"`
+	Port              int    `json:"port"`
+	LastSeen          string `json:"last_seen"`
+	LastEpoch         int    `json:"last_epoch"`
+	ClientVersion     string `json:"client_version"`
+	PossibleValidator bool   `json:"possible_validator"`
+	MaxValidatorCount int    `json:"max_validator_count"`
+	NumObservations   int    `json:"num_observations"`
 }
 
 func setupDatabase(db *sql.DB) error {
@@ -73,7 +73,7 @@ func createGetValidatorsHandler(db *sql.DB) http.HandlerFunc {
 		var validators []ValidatorTracker
 		for rows.Next() {
 			var vm ValidatorTracker
-			if err := rows.Scan(&vm.PeerID, &vm.ENR, &vm.Multiaddr, &vm.IP, &vm.Port, &vm.LastSeen, &vm.LastEpoch, &vm.ClientVersion, &vm.PossibleValidator, &vm.AverageValidatorCount, &vm.NumObservations); err != nil {
+			if err := rows.Scan(&vm.PeerID, &vm.ENR, &vm.Multiaddr, &vm.IP, &vm.Port, &vm.LastSeen, &vm.LastEpoch, &vm.ClientVersion, &vm.PossibleValidator, &vm.MaxValidatorCount, &vm.NumObservations); err != nil {
 				http.Error(w, "Error scanning row", http.StatusInternalServerError)
 				return
 			}
@@ -123,38 +123,45 @@ func (c *Consumer) HandleValidatorMetadataEvent() error {
 			isValidator := true
 			longLived := indexesFromBitfield(event.MetaData.Attnets)
 			shortLived := extractShortLivedSubnets(event.SubscribedSubnets, longLived)
-			// If there are no short lived subnets, then the peer is not a validator
-			if len(shortLived) == 0 {
+
+			prevNumObservations := uint64(0)
+			prevValidatorCount := int32(0)
+			err = c.db.QueryRow("SELECT max_validator_count, num_observations FROM validator_tracker WHERE peer_id = ?", event.ID).Scan(&prevValidatorCount, &prevNumObservations)
+
+			// If current short lived subnets are empty and
+			// also never had short-lived subnets before
+			// then the peer is not a validator
+			if len(shortLived) == 0 && prevValidatorCount == 0 {
 				isValidator = false
 			}
 
-			prevNumObservations := uint64(0)
-			prevAvgValidatorCount := int32(0)
-			err = c.db.QueryRow("SELECT NumObservations, AverageValidatorCount FROM validator_tracker WHERE PeerID = ?", event.ID).Scan(&prevNumObservations, &prevAvgValidatorCount)
+			// Assumption: Validator selected for attestation aggregation
+			// is subscribed to a single subnet for a 1 epoch duration
+			currValidatorCount := len(shortLived)
 
-			currValidatorCount := 1 + (len(shortLived)-1)/2
-			// If there are no short lived subnets, then the validator count is 0
-			if len(shortLived) == 0 {
-				currValidatorCount = 0
+			// If the previous validator count is greater then we set
+			// that as the value because it's possible the validator isn't
+			// selected for attestation aggregation in the current epoch
+			if int(prevValidatorCount) > currValidatorCount {
+				currValidatorCount = int(prevValidatorCount)
 			}
-			currAvgValidatorCount := ComputeNewAverage(prevAvgValidatorCount, prevNumObservations, currValidatorCount)
 
 			if err == sql.ErrNoRows {
 				// Insert new row
-				_, err = c.db.Exec(insertQuery, event.ID, event.ENR, event.Multiaddr, ip, port, event.Timestamp, event.Epoch, event.ClientVersion, isValidator, currAvgValidatorCount, prevNumObservations+1)
+				_, err = c.db.Exec(insertQuery, event.ID, event.ENR, event.Multiaddr, ip, port, event.Timestamp, event.Epoch, event.ClientVersion, isValidator, currValidatorCount, prevNumObservations+1)
 				if err != nil {
 					c.log.Error().Err(err).Msg("Error inserting row")
 				}
-				c.log.Trace().Str("PeerID", event.ID).Msg("Inserted new row")
+				c.log.Trace().Str("peer_id", event.ID).Msg("Inserted new row")
 			} else if err != nil {
 				c.log.Error().Err(err).Msg("Error querying database")
 			} else {
 				// Update existing row
-				_, err = c.db.Exec(updateQuery, event.ENR, event.Multiaddr, ip, port, event.Timestamp, event.Epoch, event.ClientVersion, isValidator, currAvgValidatorCount, prevNumObservations+1, event.ID)
+				_, err = c.db.Exec(updateQuery, event.ENR, event.Multiaddr, ip, port, event.Timestamp, event.Epoch, event.ClientVersion, isValidator, currValidatorCount, prevNumObservations+1, event.ID)
 				if err != nil {
 					c.log.Error().Err(err).Msg("Error updating row")
 				}
-				c.log.Trace().Str("PeerID", event.ID).Msg("Updated row")
+				c.log.Trace().Str("peer_id", event.ID).Msg("Updated row")
 			}
 		default:
 			c.log.Debug().Msg("No validator metadata event")
