@@ -20,21 +20,22 @@ var (
         Port INTEGER,
         LastSeen TEXT,
         LastEpoch INTEGER,
+		ClientVersion TEXT,
         PossibleValidator BOOLEAN,
         AverageValidatorCount INTEGER,
         NumObservations INTEGER
     );
     `
 	insertQuery = `
-				INSERT INTO validator_tracker (PeerID, ENR, Multiaddr, IP, Port, LastSeen, LastEpoch, PossibleValidator, AverageValidatorCount, NumObservations)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+				INSERT INTO validator_tracker (PeerID, ENR, Multiaddr, IP, Port, LastSeen, LastEpoch, ClientVersion, PossibleValidator, AverageValidatorCount, NumObservations)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 	updateQuery = `
 				UPDATE validator_tracker
-				SET ENR = ?, Multiaddr = ?, IP = ?, Port = ?, LastSeen = ?, LastEpoch = ?, PossibleValidator = ?, AverageValidatorCount = ?, NumObservations = ?
+				SET ENR = ?, Multiaddr = ?, IP = ?, Port = ?, LastSeen = ?, LastEpoch = ?, ClientVersion = ?, PossibleValidator = ?, AverageValidatorCount = ?, NumObservations = ?
 				WHERE PeerID = ?
 				`
 	selectQuery = `
-				SELECT PeerID, ENR, Multiaddr, IP, Port, LastSeen, LastEpoch, PossibleValidator, AverageValidatorCount, NumObservations 
+				SELECT PeerID, ENR, Multiaddr, IP, Port, LastSeen, LastEpoch, ClientVersion, PossibleValidator, AverageValidatorCount, NumObservations 
 				FROM validator_tracker`
 )
 
@@ -46,6 +47,7 @@ type ValidatorTracker struct {
 	Port                  int    `json:"port"`
 	LastSeen              string `json:"last_seen"`
 	LastEpoch             int    `json:"last_epoch"`
+	ClientVersion         string `json:"client_version"`
 	PossibleValidator     bool   `json:"possible_validator"`
 	AverageValidatorCount int    `json:"average_validator_count"`
 	NumObservations       int    `json:"num_observations"`
@@ -71,7 +73,7 @@ func createGetValidatorsHandler(db *sql.DB) http.HandlerFunc {
 		var validators []ValidatorTracker
 		for rows.Next() {
 			var vm ValidatorTracker
-			if err := rows.Scan(&vm.PeerID, &vm.ENR, &vm.Multiaddr, &vm.IP, &vm.Port, &vm.LastSeen, &vm.LastEpoch, &vm.PossibleValidator, &vm.AverageValidatorCount, &vm.NumObservations); err != nil {
+			if err := rows.Scan(&vm.PeerID, &vm.ENR, &vm.Multiaddr, &vm.IP, &vm.Port, &vm.LastSeen, &vm.LastEpoch, &vm.ClientVersion, &vm.PossibleValidator, &vm.AverageValidatorCount, &vm.NumObservations); err != nil {
 				http.Error(w, "Error scanning row", http.StatusInternalServerError)
 				return
 			}
@@ -139,7 +141,7 @@ func (c *Consumer) HandleValidatorMetadataEvent() error {
 
 			if err == sql.ErrNoRows {
 				// Insert new row
-				_, err = c.db.Exec(insertQuery, event.ID, event.ENR, event.Multiaddr, ip, port, event.Timestamp, event.Epoch, isValidator, currAvgValidatorCount, prevNumObservations+1)
+				_, err = c.db.Exec(insertQuery, event.ID, event.ENR, event.Multiaddr, ip, port, event.Timestamp, event.Epoch, event.ClientVersion, isValidator, currAvgValidatorCount, prevNumObservations+1)
 				if err != nil {
 					c.log.Error().Err(err).Msg("Error inserting row")
 				}
@@ -148,7 +150,7 @@ func (c *Consumer) HandleValidatorMetadataEvent() error {
 				c.log.Error().Err(err).Msg("Error querying database")
 			} else {
 				// Update existing row
-				_, err = c.db.Exec(updateQuery, event.ENR, event.Multiaddr, ip, port, event.Timestamp, event.Epoch, isValidator, currAvgValidatorCount, prevNumObservations+1, event.ID)
+				_, err = c.db.Exec(updateQuery, event.ENR, event.Multiaddr, ip, port, event.Timestamp, event.Epoch, event.ClientVersion, isValidator, currAvgValidatorCount, prevNumObservations+1, event.ID)
 				if err != nil {
 					c.log.Error().Err(err).Msg("Error updating row")
 				}
