@@ -45,7 +45,7 @@ func indexesFromBitfield(bitV bitfield.Bitvector64) []int64 {
 
 func extractShortLivedSubnets(subscribed []int64, longLived []int64) []int64 {
 	var shortLived []int64
-	for i := 0; i <= 64; i++ {
+	for i := 1; i <= 64; i++ {
 		if contains(subscribed, int64(i)) && !contains(longLived, int64(i)) {
 			shortLived = append(shortLived, int64(i))
 		}
