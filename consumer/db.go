@@ -18,7 +18,7 @@ var (
         multiaddr TEXT,
         ip TEXT,
         port INTEGER,
-        last_seen TEXT,
+        last_seen INTEGER,
         last_epoch INTEGER,
 		client_version TEXT,
         possible_validator BOOLEAN,
@@ -45,7 +45,7 @@ type ValidatorTracker struct {
 	Multiaddr         string `json:"multiaddr"`
 	IP                string `json:"ip"`
 	Port              int    `json:"port"`
-	LastSeen          string `json:"last_seen"`
+	LastSeen          int    `json:"last_seen"`
 	LastEpoch         int    `json:"last_epoch"`
 	ClientVersion     string `json:"client_version"`
 	PossibleValidator bool   `json:"possible_validator"`
