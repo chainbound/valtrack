@@ -20,7 +20,7 @@ var (
         port INTEGER,
         last_seen INTEGER,
         last_epoch INTEGER,
-		client_version TEXT,
+	client_version TEXT,
         possible_validator BOOLEAN,
         max_validator_count INTEGER,
         num_observations INTEGER
