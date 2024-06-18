@@ -170,19 +170,24 @@ func RunConsumer(cfg *ConsumerConfig) {
 
 	go consumer.HandleValidatorMetadataEvent()
 
-	// Start the HTTP server
+	// Set up HTTP server
+	server := &http.Server{Addr: ":8080", Handler: nil}
+
 	http.HandleFunc("/validators", createGetValidatorsHandler(db))
 
-	if err := http.ListenAndServe(":8080", nil); err != nil {
-		log.Error().Err(err).Msg("Error starting HTTP server")
-	}
+	go func() {
+		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Error().Err(err).Msg("Error starting HTTP server")
+		}
+	}()
+	defer func() {
+		server.Shutdown(context.Background())
+	}()
 
 	// Gracefully shutdown
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, os.Interrupt, syscall.SIGTERM, syscall.SIGINT)
 	<-quit
-
-	log.Info().Msg("Shutting down gracefully")
 }
 
 func (c *Consumer) Start(name string) error {
