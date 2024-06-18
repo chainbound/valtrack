@@ -207,20 +207,17 @@ func (c *Consumer) Start(name string) error {
 
 	go func() {
 		for {
-			select {
-			default:
-				batch, err := consumer.FetchNoWait(100)
-				if err != nil {
-					c.log.Error().Err(err).Msg("Error fetching batch of messages")
-					return
-				}
-				if err = batch.Error(); err != nil {
-					c.log.Error().Err(err).Msg("Error in messages batch")
-					return
-				}
-				for msg := range batch.Messages() {
-					handleMessage(c, msg)
-				}
+			batch, err := consumer.FetchNoWait(100)
+			if err != nil {
+				c.log.Error().Err(err).Msg("Error fetching batch of messages")
+				return
+			}
+			if err = batch.Error(); err != nil {
+				c.log.Error().Err(err).Msg("Error in messages batch")
+				return
+			}
+			for msg := range batch.Messages() {
+				handleMessage(c, msg)
 			}
 		}
 	}()
@@ -249,8 +246,7 @@ func handleMessage(c *Consumer, msg jetstream.Msg) {
 			return
 		}
 		c.log.Info().Any("seq", MsgMetadata.Sequence).Any("event", event).Msg("metadata_received")
-		c.validatorMetadataChan <- &event
-		c.storeValidatorEvent(event)
+		c.handleMetadataEvent(event)
 		c.storeMetadataReceivedEvent(event)
 
 	default:
@@ -262,7 +258,7 @@ func handleMessage(c *Consumer, msg jetstream.Msg) {
 	}
 }
 
-func (c *Consumer) storeValidatorEvent(event types.MetadataReceivedEvent) {
+func (c *Consumer) handleMetadataEvent(event types.MetadataReceivedEvent) {
 	// Extract the long lived subnets from the metadata
 	longLived := indexesFromBitfield(event.MetaData.Attnets)
 
@@ -273,6 +269,8 @@ func (c *Consumer) storeValidatorEvent(event types.MetadataReceivedEvent) {
 		// then there's probably no validator
 		return
 	}
+
+	c.validatorMetadataChan <- &event
 
 	validatorEvent := types.ValidatorEvent{
 		ENR:               event.ENR,
