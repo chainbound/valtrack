@@ -72,7 +72,7 @@ func RunConsumer(cfg *ConsumerConfig) {
 		log.Error().Err(err).Msg("Error creating JetStream context")
 	}
 
-	// Set up Parquet writers
+	// Create Parquet writer files
 	w_discovery, err := local.NewLocalFileWriter("discovery_events.parquet")
 	if err != nil {
 		log.Error().Err(err).Msg("Error creating discovery events parquet file")
@@ -91,16 +91,14 @@ func RunConsumer(cfg *ConsumerConfig) {
 	}
 	defer w_validator.Close()
 
+	// Set up Parquet writers
 	discoveryWriter, err := writer.NewParquetWriter(w_discovery, new(types.PeerDiscoveredEvent), 4)
 	if err != nil {
 		log.Error().Err(err).Msg("Error creating Peer discovered Parquet writer")
 	}
 	defer func() {
-		if err := discoveryWriter.WriteStop(); err != nil {
-			log.Error().Err(err).Msg("Error stopping Discovery Parquet writer")
-		} else {
-			log.Info().Msg("Stopped Discovery Parquet writer")
-		}
+		discoveryWriter.WriteStop()
+		log.Info().Msg("Stopped Discovery Parquet writer")
 	}()
 
 	metadataWriter, err := writer.NewParquetWriter(w_metadata, new(types.MetadataReceivedEvent), 4)
@@ -108,11 +106,8 @@ func RunConsumer(cfg *ConsumerConfig) {
 		log.Error().Err(err).Msg("Error creating Metadata Parquet writer")
 	}
 	defer func() {
-		if err := metadataWriter.WriteStop(); err != nil {
-			log.Error().Err(err).Msg("Error stopping Metadata Parquet writer")
-		} else {
-			log.Info().Msg("Stopped Metadata Parquet writer")
-		}
+		metadataWriter.WriteStop()
+		log.Info().Msg("Stopped Metadata Parquet writer")
 	}()
 
 	validatorWriter, err := writer.NewParquetWriter(w_validator, new(types.ValidatorEvent), 4)
@@ -120,13 +115,11 @@ func RunConsumer(cfg *ConsumerConfig) {
 		log.Error().Err(err).Msg("Error creating Validator Parquet writer")
 	}
 	defer func() {
-		if err := validatorWriter.WriteStop(); err != nil {
-			log.Error().Err(err).Msg("Error stopping Validator Parquet writer")
-		} else {
-			log.Info().Msg("Stopped Validator Parquet writer")
-		}
+		validatorWriter.WriteStop()
+		log.Info().Msg("Stopped Validator Parquet writer")
 	}()
 
+	// Set up Clickhouse client
 	chCfg := ch.ClickhouseConfig{
 		Endpoint: cfg.ChCfg.Endpoint,
 		DB:       cfg.ChCfg.DB,
@@ -162,17 +155,18 @@ func RunConsumer(cfg *ConsumerConfig) {
 		db:       db,
 	}
 
+	// Start the consumer
 	go func() {
 		if err := consumer.Start(cfg.Name); err != nil {
 			log.Error().Err(err).Msg("Error in consumer")
 		}
 	}()
 
+	// Handle validator metadata and store in the DB
 	go consumer.HandleValidatorMetadataEvent()
 
 	// Set up HTTP server
 	server := &http.Server{Addr: ":8080", Handler: nil}
-
 	http.HandleFunc("/validators", createGetValidatorsHandler(db))
 
 	go func() {
