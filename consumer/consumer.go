@@ -256,7 +256,7 @@ func handleMessage(c *Consumer, msg jetstream.Msg) {
 		}
 
 		c.log.Info().Time("timestamp", md.Timestamp).Uint64("pending", md.NumPending).Any("event", event).Msg("peer_discovered")
-		c.storePeerDiscoveredEvent(event)
+		c.storeDiscoveryEvent(event)
 
 	case "events.metadata_received":
 		var event types.MetadataReceivedEvent
