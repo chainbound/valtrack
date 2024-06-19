@@ -307,6 +307,15 @@ func (c *Consumer) runValidatorMetadataEventHandler(token string) error {
 						return
 					}
 
+					asn := ""
+					asnOrg := ""
+					asnType := ""
+					if ip.ASN != nil {
+						asn = ip.ASN.ASN
+						asnOrg = ip.ASN.Name
+						asnType = ip.ASN.Type
+					}
+
 					ipMeta := IPMetaData{
 						IP:       ip.IP.String(),
 						Hostname: ip.Hostname,
@@ -315,9 +324,9 @@ func (c *Consumer) runValidatorMetadataEventHandler(token string) error {
 						Country:  ip.Country,
 						LatLong:  ip.Location,
 						Postal:   ip.Postal,
-						ASN:      ip.ASN.ASN,
-						ASNOrg:   ip.ASN.Name,
-						ASNType:  ip.ASN.Type,
+						ASN:      asn,
+						ASNOrg:   asnOrg,
+						ASNType:  asnType,
 					}
 
 					if err := insertIPMetadata(c.db, ipMeta); err != nil {
