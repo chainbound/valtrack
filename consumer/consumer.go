@@ -23,7 +23,7 @@ import (
 	"github.com/xitongsys/parquet-go/writer"
 )
 
-const BATCH_SIZE = 256
+const BATCH_SIZE = 1024
 
 type ConsumerConfig struct {
 	LogLevel string
