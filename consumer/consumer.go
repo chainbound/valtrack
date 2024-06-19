@@ -5,13 +5,13 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
-	"github.com/chainbound/valtrack/clickhouse"
 	ch "github.com/chainbound/valtrack/clickhouse"
 	"github.com/chainbound/valtrack/log"
 	"github.com/chainbound/valtrack/types"
@@ -23,11 +23,13 @@ import (
 	"github.com/xitongsys/parquet-go/writer"
 )
 
+const BATCH_SIZE = 256
+
 type ConsumerConfig struct {
 	LogLevel string
 	NatsURL  string
 	Name     string
-	ChCfg    clickhouse.ClickhouseConfig
+	ChCfg    ch.ClickhouseConfig
 }
 
 type Consumer struct {
@@ -226,7 +228,7 @@ func (c *Consumer) Start(name string) error {
 
 	go func() {
 		for {
-			batch, err := consumer.FetchNoWait(100)
+			batch, err := consumer.FetchNoWait(BATCH_SIZE)
 			if err != nil {
 				c.log.Error().Err(err).Msg("Error fetching batch of messages")
 				return
@@ -235,9 +237,13 @@ func (c *Consumer) Start(name string) error {
 				c.log.Error().Err(err).Msg("Error in messages batch")
 				return
 			}
+			start := time.Now()
 			for msg := range batch.Messages() {
 				handleMessage(c, msg)
 			}
+
+			c.log.Info().Int("batch_size", BATCH_SIZE).Str("elapsed", time.Since(start).String()).Msg("Processed batch of messages")
+
 		}
 	}()
 
@@ -246,6 +252,8 @@ func (c *Consumer) Start(name string) error {
 
 func handleMessage(c *Consumer, msg jetstream.Msg) {
 	md, _ := msg.Metadata()
+	progress := float64(md.Sequence.Stream) / (float64(md.NumPending) + float64(md.Sequence.Stream))
+
 	switch msg.Subject() {
 	case "events.peer_discovered":
 		var event types.PeerDiscoveredEvent
@@ -255,7 +263,7 @@ func handleMessage(c *Consumer, msg jetstream.Msg) {
 			return
 		}
 
-		c.log.Info().Time("timestamp", md.Timestamp).Uint64("pending", md.NumPending).Any("event", event).Msg("peer_discovered")
+		c.log.Info().Time("timestamp", md.Timestamp).Uint64("pending", md.NumPending).Str("progress", fmt.Sprintf("%.2f%%", progress)).Msg("peer_discovered")
 		c.storeDiscoveryEvent(event)
 
 	case "events.metadata_received":
@@ -265,7 +273,8 @@ func handleMessage(c *Consumer, msg jetstream.Msg) {
 			msg.Term()
 			return
 		}
-		c.log.Info().Time("timestamp", md.Timestamp).Uint64("pending", md.NumPending).Any("event", event).Msg("metadata_received")
+
+		c.log.Info().Time("timestamp", md.Timestamp).Uint64("pending", md.NumPending).Str("progress", fmt.Sprintf("%.2f%%", progress)).Msg("metadata_received")
 		c.handleMetadataEvent(event)
 		c.storeMetadataEvent(event)
 
