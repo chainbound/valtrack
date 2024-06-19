@@ -57,7 +57,13 @@ func RunConsumer(cfg *ConsumerConfig) {
 	if err != nil {
 		log.Fatal().Err(err).Msg("Error setting up database")
 	}
-	log.Info().Msg("Sqlite Database setup complete")
+
+	err = loadIPMetadataFromCSV(db, "ip_metadata.csv")
+	if err != nil {
+		log.Fatal().Err(err).Msg("Error setting up database")
+	}
+
+	log.Info().Msg("Sqlite DB setup complete")
 
 	nc, err := nats.Connect(cfg.NatsURL)
 	if err != nil {
@@ -165,7 +171,12 @@ func RunConsumer(cfg *ConsumerConfig) {
 		}
 	}()
 
-	go consumer.HandleValidatorMetadataEvent()
+	ipInfoToken := os.Getenv("IPINFO_TOKEN")
+	if ipInfoToken == "" {
+		log.Fatal().Msg("IPINFO_TOKEN environment variable is required")
+	}
+
+	go consumer.runValidatorMetadataEventHandler(ipInfoToken)
 
 	// Start the HTTP server
 	http.HandleFunc("/validators", createGetValidatorsHandler(db))
