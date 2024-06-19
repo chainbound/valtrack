@@ -223,7 +223,15 @@ func createGetValidatorsHandler(db *sql.DB) http.HandlerFunc {
 func (c *Consumer) runValidatorMetadataEventHandler(token string) error {
 	client := ipinfo.NewClient(nil, nil, token)
 
-	for event := range c.validatorMetadataChan {
+	batchSize := 0
+
+	tx, err := c.db.Begin()
+	if err != nil {
+		return err
+	}
+
+	for {
+		event := <-c.validatorMetadataChan
 		// TODO: batching!
 		c.log.Trace().Any("event", event).Msg("Received validator event")
 
@@ -282,10 +290,12 @@ func (c *Consumer) runValidatorMetadataEventHandler(token string) error {
 
 		if err == sql.ErrNoRows {
 			// Insert new row
-			_, err = c.db.Exec(insertQuery, event.ID, event.ENR, event.Multiaddr, ip, port, event.Timestamp, event.Epoch, event.ClientVersion, isValidator, currValidatorCount, prevNumObservations+1)
+			_, err = tx.Exec(insertQuery, event.ID, event.ENR, event.Multiaddr, ip, port, event.Timestamp, event.Epoch, event.ClientVersion, isValidator, currValidatorCount, prevNumObservations+1)
 			if err != nil {
 				c.log.Error().Err(err).Msg("Error inserting row")
 			}
+
+			batchSize++
 
 			// If we have no IP yet, fetch it and insert
 			if err := c.db.QueryRow(selectIpMetadataQuery, ip).Scan(); err == sql.ErrNoRows {
@@ -320,13 +330,27 @@ func (c *Consumer) runValidatorMetadataEventHandler(token string) error {
 			c.log.Error().Err(err).Msg("Error querying database")
 		} else {
 			// Update existing row
-			_, err = c.db.Exec(updateQuery, event.ENR, event.Multiaddr, ip, port, event.Timestamp, event.Epoch, event.ClientVersion, isValidator, currValidatorCount, prevNumObservations+1, event.ID)
+			_, err = tx.Exec(updateQuery, event.ENR, event.Multiaddr, ip, port, event.Timestamp, event.Epoch, event.ClientVersion, isValidator, currValidatorCount, prevNumObservations+1, event.ID)
 			if err != nil {
 				c.log.Error().Err(err).Msg("Error updating row")
 			}
+
+			batchSize++
+
 			c.log.Trace().Str("peer_id", event.ID).Msg("Updated row")
 		}
-	}
 
-	return nil
+		if batchSize >= 512 {
+			// Commit transaction
+			tx.Commit()
+
+			// Reset transaction
+			tx, err = c.db.Begin()
+			if err != nil {
+				return err
+			}
+
+			batchSize = 0
+		}
+	}
 }
