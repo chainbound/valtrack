@@ -252,7 +252,7 @@ func (c *Consumer) Start(name string) error {
 
 func handleMessage(c *Consumer, msg jetstream.Msg) {
 	md, _ := msg.Metadata()
-	progress := float64(md.Sequence.Stream) / (float64(md.NumPending) + float64(md.Sequence.Stream))
+	progress := float64(md.Sequence.Stream) / (float64(md.NumPending) + float64(md.Sequence.Stream)) * 100
 
 	switch msg.Subject() {
 	case "events.peer_discovered":
