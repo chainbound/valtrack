@@ -31,8 +31,8 @@ if response.status_code == 200:
             continue
         
         print(f"Client Version: {client_version}")
-        print(f"  Total Peers with Validators: {counts['possible_validators']}\n")
-        print(f"  Total Validator Count: {counts['total_validators']}")
+        print(f"  Total Peers with Validators: {counts['possible_validators']}")
+        print(f"  Total Validator Count: {counts['total_validators']}\n")
 
 else:
     print(f"Failed to retrieve data from API. Status code: {response.status_code}")
