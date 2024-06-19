@@ -237,7 +237,7 @@ func (c *Consumer) Start(name string) error {
 }
 
 func handleMessage(c *Consumer, msg jetstream.Msg) {
-	MsgMetadata, _ := msg.Metadata()
+	md, _ := msg.Metadata()
 	switch msg.Subject() {
 	case "events.peer_discovered":
 		var event types.PeerDiscoveredEvent
@@ -246,7 +246,7 @@ func handleMessage(c *Consumer, msg jetstream.Msg) {
 			msg.Term()
 			return
 		}
-		c.log.Info().Any("seq", MsgMetadata.Sequence).Any("event", event).Msg("peer_discovered")
+		c.log.Info().Time("timestamp", md.Timestamp).Uint64("pending", md.NumPending).Any("event", event).Msg("peer_discovered")
 		c.storePeerDiscoveredEvent(event)
 
 	case "events.metadata_received":
@@ -256,7 +256,7 @@ func handleMessage(c *Consumer, msg jetstream.Msg) {
 			msg.Term()
 			return
 		}
-		c.log.Info().Any("seq", MsgMetadata.Sequence).Any("event", event).Msg("metadata_received")
+		c.log.Info().Time("timestamp", md.Timestamp).Uint64("pending", md.NumPending).Any("event", event).Msg("metadata_received")
 		c.handleMetadataEvent(event)
 		c.storeMetadataReceivedEvent(event)
 
