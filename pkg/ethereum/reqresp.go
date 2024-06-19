@@ -186,7 +186,7 @@ func (r *ReqResp) wrapStreamHandler(ctx context.Context, name string, handler Co
 		}
 		duration := time.Since(start)
 
-		r.log.Debug().Any("protocol", s.Protocol()).Str("peer", s.Conn().RemotePeer().String()).Dur("duration", time.Duration(duration.Seconds())).Msg("Stream Closed")
+		r.log.Debug().Any("protocol", s.Protocol()).Str("peer", s.Conn().RemotePeer().String()).Dur("duration(ms)", time.Duration(duration.Milliseconds())).Msg("Stream Closed")
 	}
 }
 

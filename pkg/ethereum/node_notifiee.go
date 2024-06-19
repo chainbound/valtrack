@@ -98,6 +98,8 @@ func (n *Node) handleOutboundConnection(pid peer.ID) {
 	// Save the client version
 	if v, err := n.host.Peerstore().Get(pid, "AgentVersion"); err == nil {
 		n.peerstore.SetClientVersion(pid, v.(string))
+	} else {
+		n.peerstore.SetClientVersion(pid, "unknown")
 	}
 
 	// Sleep 2 seconds to allow for all subnet subscriptions to be processed
