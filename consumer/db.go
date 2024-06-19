@@ -10,7 +10,6 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/ipinfo/go/v2/ipinfo"
 	ma "github.com/multiformats/go-multiaddr"
@@ -224,113 +223,110 @@ func createGetValidatorsHandler(db *sql.DB) http.HandlerFunc {
 func (c *Consumer) runValidatorMetadataEventHandler(token string) error {
 	client := ipinfo.NewClient(nil, nil, token)
 
-	for {
-		select {
-		case event := <-c.validatorMetadataChan:
-			c.log.Trace().Any("event", event).Msg("Received validator event")
+	for event := range c.validatorMetadataChan {
+		// TODO: batching!
+		c.log.Trace().Any("event", event).Msg("Received validator event")
 
-			maddr, err := ma.NewMultiaddr(event.Multiaddr)
+		maddr, err := ma.NewMultiaddr(event.Multiaddr)
+		if err != nil {
+			c.log.Error().Err(err).Msg("Invalid multiaddr")
+			continue
+		}
+
+		ip, err := maddr.ValueForProtocol(ma.P_IP4)
+		if err != nil {
+			ip, err = maddr.ValueForProtocol(ma.P_IP6)
 			if err != nil {
-				c.log.Error().Err(err).Msg("Invalid multiaddr")
+				c.log.Error().Err(err).Msg("Invalid IP in multiaddr")
 				continue
 			}
+		}
 
-			ip, err := maddr.ValueForProtocol(ma.P_IP4)
+		portStr, err := maddr.ValueForProtocol(ma.P_TCP)
+		if err != nil {
+			c.log.Error().Err(err).Msg("Invalid port in multiaddr")
+			continue
+		}
+
+		port, err := strconv.Atoi(portStr)
+		if err != nil {
+			c.log.Error().Err(err).Msg("Invalid port number")
+			continue
+		}
+
+		isValidator := true
+		longLived := indexesFromBitfield(event.MetaData.Attnets)
+		shortLived := extractShortLivedSubnets(event.SubscribedSubnets, longLived)
+
+		prevNumObservations := uint64(0)
+		prevValidatorCount := int32(0)
+		err = c.db.QueryRow("SELECT max_validator_count, num_observations FROM validator_tracker WHERE peer_id = ?", event.ID).Scan(&prevValidatorCount, &prevNumObservations)
+
+		// If current short lived subnets are empty and
+		// also never had short-lived subnets before
+		// then the peer is not a validator
+		if len(shortLived) == 0 && prevValidatorCount == 0 {
+			isValidator = false
+		}
+
+		// Assumption: Validator selected for attestation aggregation
+		// is subscribed to a single subnet for a 1 epoch duration
+		currValidatorCount := len(shortLived)
+
+		// If the previous validator count is greater then we set
+		// that as the value because it's possible the validator isn't
+		// selected for attestation aggregation in the current epoch
+		if int(prevValidatorCount) > currValidatorCount {
+			currValidatorCount = int(prevValidatorCount)
+		}
+
+		if err == sql.ErrNoRows {
+			// Insert new row
+			_, err = c.db.Exec(insertQuery, event.ID, event.ENR, event.Multiaddr, ip, port, event.Timestamp, event.Epoch, event.ClientVersion, isValidator, currValidatorCount, prevNumObservations+1)
 			if err != nil {
-				ip, err = maddr.ValueForProtocol(ma.P_IP6)
-				if err != nil {
-					c.log.Error().Err(err).Msg("Invalid IP in multiaddr")
-					continue
-				}
+				c.log.Error().Err(err).Msg("Error inserting row")
 			}
 
-			portStr, err := maddr.ValueForProtocol(ma.P_TCP)
+			// If we have no IP yet, fetch it and insert
+			if err := c.db.QueryRow(selectIpMetadataQuery, ip).Scan(); err == sql.ErrNoRows {
+				c.log.Info().Str("ip", ip).Msg("Unknown IP, fetching IP info...")
+				go func() {
+					ip, err := client.GetIPInfo(net.ParseIP(ip))
+					if err != nil {
+						c.log.Error().Err(err).Msg("Error fetching IP info")
+						return
+					}
+
+					ipMeta := IPMetaData{
+						IP:       ip.IP.String(),
+						Hostname: ip.Hostname,
+						City:     ip.City,
+						Region:   ip.Region,
+						Country:  ip.Country,
+						LatLong:  ip.Location,
+						Postal:   ip.Postal,
+						ASN:      ip.ASN.ASN,
+						ASNOrg:   ip.ASN.Name,
+						ASNType:  ip.ASN.Type,
+					}
+
+					if err := insertIPMetadata(c.db, ipMeta); err != nil {
+						c.log.Error().Err(err).Msg("Error inserting IP metadata")
+					}
+				}()
+			}
+			c.log.Trace().Str("peer_id", event.ID).Msg("Inserted new row")
+		} else if err != nil {
+			c.log.Error().Err(err).Msg("Error querying database")
+		} else {
+			// Update existing row
+			_, err = c.db.Exec(updateQuery, event.ENR, event.Multiaddr, ip, port, event.Timestamp, event.Epoch, event.ClientVersion, isValidator, currValidatorCount, prevNumObservations+1, event.ID)
 			if err != nil {
-				c.log.Error().Err(err).Msg("Invalid port in multiaddr")
-				continue
+				c.log.Error().Err(err).Msg("Error updating row")
 			}
-
-			port, err := strconv.Atoi(portStr)
-			if err != nil {
-				c.log.Error().Err(err).Msg("Invalid port number")
-				continue
-			}
-
-			isValidator := true
-			longLived := indexesFromBitfield(event.MetaData.Attnets)
-			shortLived := extractShortLivedSubnets(event.SubscribedSubnets, longLived)
-
-			prevNumObservations := uint64(0)
-			prevValidatorCount := int32(0)
-			err = c.db.QueryRow("SELECT max_validator_count, num_observations FROM validator_tracker WHERE peer_id = ?", event.ID).Scan(&prevValidatorCount, &prevNumObservations)
-
-			// If current short lived subnets are empty and
-			// also never had short-lived subnets before
-			// then the peer is not a validator
-			if len(shortLived) == 0 && prevValidatorCount == 0 {
-				isValidator = false
-			}
-
-			// Assumption: Validator selected for attestation aggregation
-			// is subscribed to a single subnet for a 1 epoch duration
-			currValidatorCount := len(shortLived)
-
-			// If the previous validator count is greater then we set
-			// that as the value because it's possible the validator isn't
-			// selected for attestation aggregation in the current epoch
-			if int(prevValidatorCount) > currValidatorCount {
-				currValidatorCount = int(prevValidatorCount)
-			}
-
-			if err == sql.ErrNoRows {
-				// Insert new row
-				_, err = c.db.Exec(insertQuery, event.ID, event.ENR, event.Multiaddr, ip, port, event.Timestamp, event.Epoch, event.ClientVersion, isValidator, currValidatorCount, prevNumObservations+1)
-				if err != nil {
-					c.log.Error().Err(err).Msg("Error inserting row")
-				}
-
-				// If we have no IP yet, fetch it and insert
-				if err := c.db.QueryRow(selectIpMetadataQuery, ip).Scan(); err == sql.ErrNoRows {
-					c.log.Info().Str("ip", ip).Msg("Unknown IP, fetching IP info...")
-					go func() {
-						ip, err := client.GetIPInfo(net.ParseIP(ip))
-						if err != nil {
-							c.log.Error().Err(err).Msg("Error fetching IP info")
-							return
-						}
-
-						ipMeta := IPMetaData{
-							IP:       ip.IP.String(),
-							Hostname: ip.Hostname,
-							City:     ip.City,
-							Region:   ip.Region,
-							Country:  ip.Country,
-							LatLong:  ip.Location,
-							Postal:   ip.Postal,
-							ASN:      ip.ASN.ASN,
-							ASNOrg:   ip.ASN.Name,
-							ASNType:  ip.ASN.Type,
-						}
-
-						if err := insertIPMetadata(c.db, ipMeta); err != nil {
-							c.log.Error().Err(err).Msg("Error inserting IP metadata")
-						}
-					}()
-				}
-				c.log.Trace().Str("peer_id", event.ID).Msg("Inserted new row")
-			} else if err != nil {
-				c.log.Error().Err(err).Msg("Error querying database")
-			} else {
-				// Update existing row
-				_, err = c.db.Exec(updateQuery, event.ENR, event.Multiaddr, ip, port, event.Timestamp, event.Epoch, event.ClientVersion, isValidator, currValidatorCount, prevNumObservations+1, event.ID)
-				if err != nil {
-					c.log.Error().Err(err).Msg("Error updating row")
-				}
-				c.log.Trace().Str("peer_id", event.ID).Msg("Updated row")
-			}
-		default:
-			c.log.Debug().Msg("No validator metadata event")
-			time.Sleep(1 * time.Second) // Prevents busy waiting
+			c.log.Trace().Str("peer_id", event.ID).Msg("Updated row")
 		}
 	}
+
+	return nil
 }
