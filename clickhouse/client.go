@@ -57,7 +57,7 @@ func NewClickhouseClient(cfg *ClickhouseConfig) (*ClickhouseClient, error) {
 		Addr:        []string{cfg.Endpoint},
 		DialTimeout: time.Second * 60,
 		Auth: clickhouse.Auth{
-			Database: "default",
+			Database: cfg.DB,
 			Username: cfg.Username,
 			Password: cfg.Password,
 		},

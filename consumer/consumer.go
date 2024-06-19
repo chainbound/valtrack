@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"os"
 	"os/signal"
@@ -32,11 +31,11 @@ type ConsumerConfig struct {
 }
 
 type Consumer struct {
-	log                    zerolog.Logger
-	peerDiscoveredWriter   *writer.ParquetWriter
-	metadataReceivedWriter *writer.ParquetWriter
-	validatorWriter        *writer.ParquetWriter
-	js                     jetstream.JetStream
+	log             zerolog.Logger
+	discoveryWriter *writer.ParquetWriter
+	metadataWriter  *writer.ParquetWriter
+	validatorWriter *writer.ParquetWriter
+	js              jetstream.JetStream
 
 	validatorMetadataChan chan *types.MetadataReceivedEvent
 
@@ -45,15 +44,22 @@ type Consumer struct {
 }
 
 func RunConsumer(cfg *ConsumerConfig) {
+	// Set up logging
 	log := log.NewLogger("consumer")
 
+	// Set up the sqlite database
 	db, err := sql.Open("sqlite3", "./validator_tracker.sqlite")
 	if err != nil {
-		log.Fatal().Err(err).Msg("Error opening database")
+		log.Error().Err(err).Msg("Error opening database")
 	}
 	defer db.Close()
 
 	err = setupDatabase(db)
+	if err != nil {
+		log.Error().Err(err).Msg("Error setting up database")
+	}
+
+	err = loadIPMetadataFromCSV(db, "ip_metadata.csv")
 	if err != nil {
 		log.Fatal().Err(err).Msg("Error setting up database")
 	}
@@ -65,71 +71,66 @@ func RunConsumer(cfg *ConsumerConfig) {
 
 	log.Info().Msg("Sqlite DB setup complete")
 
+	// Set up NATS
 	nc, err := nats.Connect(cfg.NatsURL)
 	if err != nil {
-		log.Fatal().Err(err).Msg("Error connecting to NATS")
+		log.Error().Err(err).Msg("Error connecting to NATS")
 	}
 	defer nc.Close()
 
 	js, err := jetstream.New(nc)
 	if err != nil {
-		log.Fatal().Err(err).Msg("Error creating JetStream context")
+		log.Error().Err(err).Msg("Error creating JetStream context")
 	}
 
-	w_peer, err := local.NewLocalFileWriter("discovery_events.parquet")
+	// Create Parquet writer files
+	w_discovery, err := local.NewLocalFileWriter("discovery_events.parquet")
 	if err != nil {
-		log.Fatal().Err(err).Msg("Error creating peer_discovered parquet file")
+		log.Error().Err(err).Msg("Error creating discovery events parquet file")
 	}
-	defer w_peer.Close()
+	defer w_discovery.Close()
 
 	w_metadata, err := local.NewLocalFileWriter("metadata_events.parquet")
 	if err != nil {
-		log.Fatal().Err(err).Msg("Error creating metadata_received parquet file")
+		log.Error().Err(err).Msg("Error creating metadata events parquet file")
 	}
 	defer w_metadata.Close()
 
 	w_validator, err := local.NewLocalFileWriter("validator_metadata_events.parquet")
 	if err != nil {
-		log.Fatal().Err(err).Msg("Error creating validator parquet file")
+		log.Error().Err(err).Msg("Error creating validator parquet file")
 	}
 	defer w_validator.Close()
 
-	metadataReceivedWriter, err := writer.NewParquetWriter(w_metadata, new(types.MetadataReceivedEvent), 4)
+	// Set up Parquet writers
+	discoveryWriter, err := writer.NewParquetWriter(w_discovery, new(types.PeerDiscoveredEvent), 4)
 	if err != nil {
-		log.Fatal().Err(err).Msg("Error creating Metadata Parquet writer")
+		log.Error().Err(err).Msg("Error creating Peer discovered Parquet writer")
 	}
 	defer func() {
-		if err := metadataReceivedWriter.WriteStop(); err != nil {
-			fmt.Printf("Error stopping Metadata Parquet writer: %v\n", err)
-		} else {
-			fmt.Println("Stopped Metadata Parquet writer")
-		}
+		discoveryWriter.WriteStop()
+		log.Info().Msg("Stopped Discovery Parquet writer")
 	}()
 
-	peerDiscoveredWriter, err := writer.NewParquetWriter(w_peer, new(types.PeerDiscoveredEvent), 4)
+	metadataWriter, err := writer.NewParquetWriter(w_metadata, new(types.MetadataReceivedEvent), 4)
 	if err != nil {
-		log.Fatal().Err(err).Msg("Error creating Peer discovered Parquet writer")
+		log.Error().Err(err).Msg("Error creating Metadata Parquet writer")
 	}
 	defer func() {
-		if err := peerDiscoveredWriter.WriteStop(); err != nil {
-			fmt.Printf("Error stopping Peer discovered Parquet writer: %v\n", err)
-		} else {
-			fmt.Println("Stopped Peer discovered Parquet writer")
-		}
+		metadataWriter.WriteStop()
+		log.Info().Msg("Stopped Metadata Parquet writer")
 	}()
 
 	validatorWriter, err := writer.NewParquetWriter(w_validator, new(types.ValidatorEvent), 4)
 	if err != nil {
-		log.Fatal().Err(err).Msg("Error creating Validator Parquet writer")
+		log.Error().Err(err).Msg("Error creating Validator Parquet writer")
 	}
 	defer func() {
-		if err := validatorWriter.WriteStop(); err != nil {
-			fmt.Printf("Error stopping Validator Parquet writer: %v\n", err)
-		} else {
-			fmt.Println("Stopped Validator Parquet writer")
-		}
+		validatorWriter.WriteStop()
+		log.Info().Msg("Stopped Validator Parquet writer")
 	}()
 
+	// Set up Clickhouse client
 	chCfg := ch.ClickhouseConfig{
 		Endpoint: cfg.ChCfg.Endpoint,
 		DB:       cfg.ChCfg.DB,
@@ -143,21 +144,21 @@ func RunConsumer(cfg *ConsumerConfig) {
 	if chCfg.Endpoint != "" {
 		chClient, err = ch.NewClickhouseClient(&chCfg)
 		if err != nil {
-			log.Fatal().Err(err).Msg("Error creating Clickhouse client")
+			log.Error().Err(err).Msg("Error creating Clickhouse client")
 		}
 
 		err = chClient.Start()
 		if err != nil {
-			log.Fatal().Err(err).Msg("Error starting Clickhouse client")
+			log.Error().Err(err).Msg("Error starting Clickhouse client")
 		}
 	}
 
 	consumer := Consumer{
-		log:                    log,
-		peerDiscoveredWriter:   peerDiscoveredWriter,
-		metadataReceivedWriter: metadataReceivedWriter,
-		validatorWriter:        validatorWriter,
-		js:                     js,
+		log:             log,
+		discoveryWriter: discoveryWriter,
+		metadataWriter:  metadataWriter,
+		validatorWriter: validatorWriter,
+		js:              js,
 
 		validatorMetadataChan: make(chan *types.MetadataReceivedEvent, 16384),
 
@@ -165,9 +166,10 @@ func RunConsumer(cfg *ConsumerConfig) {
 		db:       db,
 	}
 
+	// Start the consumer
 	go func() {
 		if err := consumer.Start(cfg.Name); err != nil {
-			log.Fatal().Err(err).Msg("Error in consumer")
+			log.Error().Err(err).Msg("Error in consumer")
 		}
 	}()
 
@@ -178,12 +180,18 @@ func RunConsumer(cfg *ConsumerConfig) {
 
 	go consumer.runValidatorMetadataEventHandler(ipInfoToken)
 
-	// Start the HTTP server
+	// Set up HTTP server
+	server := &http.Server{Addr: ":8080", Handler: nil}
 	http.HandleFunc("/validators", createGetValidatorsHandler(db))
 
-	if err := http.ListenAndServe(":8080", nil); err != nil {
-		log.Fatal().Err(err).Msg("Error starting HTTP server")
-	}
+	go func() {
+		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Error().Err(err).Msg("Error starting HTTP server")
+		}
+	}()
+	defer func() {
+		server.Shutdown(context.Background())
+	}()
 
 	// Gracefully shutdown
 	quit := make(chan os.Signal, 1)
@@ -246,6 +254,7 @@ func handleMessage(c *Consumer, msg jetstream.Msg) {
 			msg.Term()
 			return
 		}
+
 		c.log.Info().Time("timestamp", md.Timestamp).Uint64("pending", md.NumPending).Any("event", event).Msg("peer_discovered")
 		c.storePeerDiscoveredEvent(event)
 
@@ -258,7 +267,7 @@ func handleMessage(c *Consumer, msg jetstream.Msg) {
 		}
 		c.log.Info().Time("timestamp", md.Timestamp).Uint64("pending", md.NumPending).Any("event", event).Msg("metadata_received")
 		c.handleMetadataEvent(event)
-		c.storeMetadataReceivedEvent(event)
+		c.storeMetadataEvent(event)
 
 	default:
 		c.log.Warn().Str("subject", msg.Subject()).Msg("Unknown event type")
@@ -311,18 +320,18 @@ func (c *Consumer) handleMetadataEvent(event types.MetadataReceivedEvent) {
 	}
 }
 
-func (c *Consumer) storePeerDiscoveredEvent(event types.PeerDiscoveredEvent) {
-	if err := c.peerDiscoveredWriter.Write(event); err != nil {
-		c.log.Err(err).Msg("Failed to write peer_discovered event to Parquet file")
+func (c *Consumer) storeDiscoveryEvent(event types.PeerDiscoveredEvent) {
+	if err := c.discoveryWriter.Write(event); err != nil {
+		c.log.Err(err).Msg("Failed to write discovery event to Parquet file")
 	} else {
-		c.log.Trace().Msg("Wrote peer_discovered event to Parquet file")
+		c.log.Trace().Msg("Wrote discovery event to Parquet file")
 	}
 }
 
-func (c *Consumer) storeMetadataReceivedEvent(event types.MetadataReceivedEvent) {
-	if err := c.metadataReceivedWriter.Write(event); err != nil {
-		c.log.Err(err).Msg("Failed to write metadata_received event to Parquet file")
+func (c *Consumer) storeMetadataEvent(event types.MetadataReceivedEvent) {
+	if err := c.metadataWriter.Write(event); err != nil {
+		c.log.Err(err).Msg("Failed to write metadata event to Parquet file")
 	} else {
-		c.log.Trace().Msg("Wrote metadata_received event to Parquet file")
+		c.log.Trace().Msg("Wrote metadata event to Parquet file")
 	}
 }
