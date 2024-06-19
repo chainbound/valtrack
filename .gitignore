@@ -3,3 +3,4 @@ peerstore.db
 *.py
 *.parquet
 *.sqlite
+*.sqlite-journal
