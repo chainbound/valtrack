@@ -64,6 +64,11 @@ func RunConsumer(cfg *ConsumerConfig) {
 		log.Fatal().Err(err).Msg("Error setting up database")
 	}
 
+	err = loadIPMetadataFromCSV(db, "ip_metadata.csv")
+	if err != nil {
+		log.Fatal().Err(err).Msg("Error setting up database")
+	}
+
 	log.Info().Msg("Sqlite DB setup complete")
 
 	// Set up NATS
@@ -240,7 +245,7 @@ func (c *Consumer) Start(name string) error {
 }
 
 func handleMessage(c *Consumer, msg jetstream.Msg) {
-	MsgMetadata, _ := msg.Metadata()
+	md, _ := msg.Metadata()
 	switch msg.Subject() {
 	case "events.peer_discovered":
 		var event types.PeerDiscoveredEvent
@@ -249,8 +254,9 @@ func handleMessage(c *Consumer, msg jetstream.Msg) {
 			msg.Term()
 			return
 		}
-		c.log.Info().Any("seq", MsgMetadata.Sequence).Any("event", event).Msg("peer_discovered")
-		c.storeDiscoveryEvent(event)
+
+		c.log.Info().Time("timestamp", md.Timestamp).Uint64("pending", md.NumPending).Any("event", event).Msg("peer_discovered")
+		c.storePeerDiscoveredEvent(event)
 
 	case "events.metadata_received":
 		var event types.MetadataReceivedEvent
@@ -259,7 +265,7 @@ func handleMessage(c *Consumer, msg jetstream.Msg) {
 			msg.Term()
 			return
 		}
-		c.log.Info().Any("seq", MsgMetadata.Sequence).Any("event", event).Msg("metadata_received")
+		c.log.Info().Time("timestamp", md.Timestamp).Uint64("pending", md.NumPending).Any("event", event).Msg("metadata_received")
 		c.handleMetadataEvent(event)
 		c.storeMetadataEvent(event)
 
