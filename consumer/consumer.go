@@ -237,12 +237,10 @@ func (c *Consumer) Start(name string) error {
 				c.log.Error().Err(err).Msg("Error in messages batch")
 				return
 			}
-			start := time.Now()
+
 			for msg := range batch.Messages() {
 				handleMessage(c, msg)
 			}
-
-			c.log.Info().Int("batch_size", BATCH_SIZE).Str("elapsed", time.Since(start).String()).Msg("Processed batch of messages")
 
 		}
 	}()
