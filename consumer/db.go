@@ -10,10 +10,8 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/ipinfo/go/v2/ipinfo"
-	"github.com/mattn/go-sqlite3"
 	ma "github.com/multiformats/go-multiaddr"
 	"github.com/pkg/errors"
 )
@@ -182,12 +180,12 @@ type IPMetaData struct {
 	ASNType  string `json:"asn_type"`
 }
 
-func insertIPMetadata(db *sql.DB, ip IPMetaData) error {
+func insertIPMetadata(tx *sql.Tx, ip IPMetaData) error {
 	parts := strings.Split(ip.LatLong, ",")
 	lat, _ := strconv.ParseFloat(parts[0], 64)
 	long, _ := strconv.ParseFloat(parts[1], 64)
 
-	_, err := db.Exec(insertIpMetadataQuery, ip.IP, ip.Hostname, ip.City, ip.Region, ip.Country, lat, long, ip.Postal, ip.ASN, ip.ASNOrg, ip.ASNType)
+	_, err := tx.Exec(insertIpMetadataQuery, ip.IP, ip.Hostname, ip.City, ip.Region, ip.Country, lat, long, ip.Postal, ip.ASN, ip.ASNOrg, ip.ASNType)
 	if err != nil {
 		return err
 	}
@@ -331,18 +329,12 @@ func (c *Consumer) runValidatorMetadataEventHandler(token string) error {
 						ASNType:  asnType,
 					}
 
-					for {
-						if err := insertIPMetadata(c.db, ipMeta); err != nil {
-							if err == sqlite3.ErrLocked {
-								c.log.Error().Err(err).Msg("IP insert failed due to DB lock, retrying...")
-								time.Sleep(1 * time.Second)
-								continue
-							}
-
-							c.log.Error().Err(err).Msg("Error inserting IP metadata")
-							break
-						}
+					if err := insertIPMetadata(tx, ipMeta); err != nil {
+						c.log.Error().Err(err).Msg("Error inserting IP metadata")
+						return
 					}
+
+					batchSize++
 				}()
 			}
 			c.log.Trace().Str("peer_id", event.ID).Msg("Inserted new row")
@@ -360,7 +352,7 @@ func (c *Consumer) runValidatorMetadataEventHandler(token string) error {
 			c.log.Trace().Str("peer_id", event.ID).Msg("Updated row")
 		}
 
-		if batchSize >= 512 {
+		if batchSize >= 32 {
 			// Commit transaction
 			tx.Commit()
 
