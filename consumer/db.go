@@ -10,8 +10,10 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/ipinfo/go/v2/ipinfo"
+	"github.com/mattn/go-sqlite3"
 	ma "github.com/multiformats/go-multiaddr"
 	"github.com/pkg/errors"
 )
@@ -329,8 +331,17 @@ func (c *Consumer) runValidatorMetadataEventHandler(token string) error {
 						ASNType:  asnType,
 					}
 
-					if err := insertIPMetadata(c.db, ipMeta); err != nil {
-						c.log.Error().Err(err).Msg("Error inserting IP metadata")
+					for {
+						if err := insertIPMetadata(c.db, ipMeta); err != nil {
+							if err == sqlite3.ErrLocked {
+								c.log.Error().Err(err).Msg("IP insert failed due to DB lock, retrying...")
+								time.Sleep(1 * time.Second)
+								continue
+							}
+
+							c.log.Error().Err(err).Msg("Error inserting IP metadata")
+							break
+						}
 					}
 				}()
 			}
