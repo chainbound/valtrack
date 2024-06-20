@@ -286,9 +286,10 @@ func (c *Consumer) handleMetadataEvent(event types.MetadataReceivedEvent) {
 
 	c.log.Info().Str("peer", event.ID).Any("long_lived_subnets", longLived).Any("subscribed_subnets", event.SubscribedSubnets).Msg("Checking for validator")
 
-	if len(extractShortLivedSubnets(event.SubscribedSubnets, longLived)) == 0 {
+	if len(extractShortLivedSubnets(event.SubscribedSubnets, longLived)) == 0 || len(longLived) != 2 {
 		// If the subscribed subnets and the longLived subnets are the same,
-		// then there's probably no validator
+		// then there's probably no validator OR
+		// If the longLived subnets are not equal to 2
 		return
 	}
 
