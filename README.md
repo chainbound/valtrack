@@ -164,7 +164,7 @@ Admin access (requires an API key):
 curl -H "X-API-KEY: <API-KEY>" http://localhost:8080/validators
 ```
 
-You can add the API key in the `api_keys.env` file.
+API keys can be added in the `api_keys.env` file.
 
 ## Credits
 
