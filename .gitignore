@@ -4,3 +4,4 @@ peerstore.db
 *.parquet
 *.sqlite
 *.sqlite-journal
+api_keys.txt

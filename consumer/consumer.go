@@ -49,6 +49,13 @@ func RunConsumer(cfg *ConsumerConfig) {
 	// Set up logging
 	log := log.NewLogger("consumer")
 
+	// Read the API keys
+	apiKeys, err := LoadAPIKeys("api_keys.txt")
+	if err != nil {
+		log.Error().Err(err).Msg("Error reading API keys")
+	}
+	log.Info().Msg("API keys loaded")
+
 	// Set up the sqlite database
 	db, err := sql.Open("sqlite3", "./validator_tracker.sqlite")
 	if err != nil {
@@ -179,7 +186,7 @@ func RunConsumer(cfg *ConsumerConfig) {
 
 	// Set up HTTP server
 	server := &http.Server{Addr: ":8080", Handler: nil}
-	http.HandleFunc("/validators", createGetValidatorsHandler(db))
+	http.HandleFunc("/validators", createGetValidatorsHandler(db, apiKeys))
 
 	go func() {
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
