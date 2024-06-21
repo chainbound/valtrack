@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
-	"net/http"
 	"os"
 	"strconv"
 	"strings"
@@ -57,36 +56,10 @@ var (
 				SET enr = ?, multiaddr = ?, ip = ?, port = ?, last_seen = ?, last_epoch = ?, client_version = ?, possible_validator = ?, max_validator_count = ?, num_observations = ?
 				WHERE peer_id = ?
 				`
-	selectQuery = `SELECT peer_id, enr, multiaddr, validator_tracker.ip, port, last_seen, last_epoch, client_version, possible_validator, max_validator_count, num_observations, hostname, city, region, country, latitude, longitude, postal_code, asn, asn_organization, asn_type FROM validator_tracker JOIN ip_metadata ON validator_tracker.ip = ip_metadata.ip`
-
 	selectIpMetadataQuery = `SELECT * FROM ip_metadata WHERE ip = ?`
 
 	insertIpMetadataQuery = `INSERT INTO ip_metadata (ip, hostname, city, region, country, latitude, longitude, postal_code, asn, asn_organization, asn_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 )
-
-type ValidatorTracker struct {
-	PeerID            string  `json:"peer_id"`
-	ENR               string  `json:"enr"`
-	Multiaddr         string  `json:"multiaddr"`
-	IP                string  `json:"ip"`
-	Port              int     `json:"port"`
-	LastSeen          int     `json:"last_seen"`
-	LastEpoch         int     `json:"last_epoch"`
-	ClientVersion     string  `json:"client_version"`
-	PossibleValidator bool    `json:"possible_validator"`
-	MaxValidatorCount int     `json:"max_validator_count"`
-	NumObservations   int     `json:"num_observations"`
-	Hostname          string  `json:"hostname"`
-	City              string  `json:"city"`
-	Region            string  `json:"region"`
-	Country           string  `json:"country"`
-	Latitude          float64 `json:"latitude"`
-	Longitude         float64 `json:"longitude"`
-	PostalCode        string  `json:"postal_code"`
-	ASN               string  `json:"asn"`
-	ASNOrganization   string  `json:"asn_organization"`
-	ASNType           string  `json:"asn_type"`
-}
 
 func setupDatabase(db *sql.DB) error {
 	_, err := db.Exec(createTrackerTableQuery)
@@ -191,33 +164,6 @@ func insertIPMetadata(tx *sql.Tx, ip IPMetaData) error {
 	}
 
 	return nil
-}
-
-func createGetValidatorsHandler(db *sql.DB) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		rows, err := db.Query(selectQuery)
-		if err != nil {
-			http.Error(w, "Error querying database", http.StatusInternalServerError)
-			return
-		}
-		defer rows.Close()
-
-		var validators []ValidatorTracker
-		for rows.Next() {
-			var vm ValidatorTracker
-			// SELECT peer_id, enr, multiaddr, ip, port, last_seen, last_epoch, client_version, possible_validator, max_validator_count, num_observations, hostname, city, region, country, latitude, longitude, postal_code, asn, asn_organization, asn_type
-			if err := rows.Scan(&vm.PeerID, &vm.ENR, &vm.Multiaddr, &vm.IP, &vm.Port, &vm.LastSeen, &vm.LastEpoch, &vm.ClientVersion, &vm.PossibleValidator, &vm.MaxValidatorCount, &vm.NumObservations, &vm.Hostname, &vm.City, &vm.Region, &vm.Country, &vm.Latitude, &vm.Longitude, &vm.PostalCode, &vm.ASN, &vm.ASNOrganization, &vm.ASNType); err != nil {
-				http.Error(w, fmt.Sprintf("Error scanning row: %s", err), http.StatusInternalServerError)
-				return
-			}
-			validators = append(validators, vm)
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		if err := json.NewEncoder(w).Encode(validators); err != nil {
-			http.Error(w, "Error encoding JSON", http.StatusInternalServerError)
-		}
-	}
 }
 
 func (c *Consumer) runValidatorMetadataEventHandler(token string) error {
