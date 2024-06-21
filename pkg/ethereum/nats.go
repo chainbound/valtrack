@@ -7,35 +7,12 @@ import (
 	"os"
 	"time"
 
+	"github.com/chainbound/valtrack/types"
 	"github.com/ethereum/go-ethereum/p2p/enode"
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
 	"github.com/pkg/errors"
-	eth "github.com/prysmaticlabs/prysm/v5/proto/prysm/v1alpha1"
 )
-
-type PeerDiscoveredEvent struct {
-	ENR        string `json:"enr"`
-	ID         string `json:"id"`
-	IP         string `json:"ip"`
-	Port       int    `json:"port"`
-	CrawlerID  string `json:"crawler_id"`
-	CrawlerLoc string `json:"crawler_location"`
-	Timestamp  int64  `json:"timestamp"`
-}
-
-type MetadataReceivedEvent struct {
-	ENR               string          `json:"enr"`
-	ID                string          `json:"id"`
-	Multiaddr         string          `json:"multiaddr"`
-	Epoch             int             `json:"epoch"`
-	MetaData          *eth.MetaDataV1 `json:"metadata"`
-	SubscribedSubnets []int64         `json:"subscribed_subnets"`
-	ClientVersion     string          `json:"client_version"`
-	CrawlerID         string          `json:"crawler_id"`
-	CrawlerLoc        string          `json:"crawler_location"`
-	Timestamp         int64           `json:"timestamp"` // Timestamp in UNIX milliseconds
-}
 
 func createNatsStream(url string) (js jetstream.JetStream, err error) {
 	// If empty URL and empty env variable, return nil and run without NATS
@@ -71,7 +48,7 @@ func createNatsStream(url string) (js jetstream.JetStream, err error) {
 	return js, nil
 }
 
-func (n *Node) sendMetadataEvent(ctx context.Context, event *MetadataReceivedEvent) {
+func (n *Node) sendMetadataEvent(ctx context.Context, event *types.MetadataReceivedEvent) {
 	event.CrawlerID = getCrawlerMachineID()
 	event.CrawlerLoc = getCrawlerLocation()
 
@@ -116,7 +93,7 @@ func (n *Node) startMetadataPublisher() {
 }
 
 func (d *DiscoveryV5) sendPeerEvent(ctx context.Context, node *enode.Node, hInfo *HostInfo) {
-	peerEvent := &PeerDiscoveredEvent{
+	peerEvent := &types.PeerDiscoveredEvent{
 		ENR:        node.String(),
 		ID:         hInfo.ID.String(),
 		IP:         hInfo.IP,

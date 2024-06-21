@@ -2,154 +2,193 @@ package consumer
 
 import (
 	"context"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
+	ch "github.com/chainbound/valtrack/clickhouse"
 	"github.com/chainbound/valtrack/log"
-	"github.com/chainbound/valtrack/pkg/ethereum"
-	"github.com/google/uuid"
+	"github.com/chainbound/valtrack/types"
+	_ "github.com/mattn/go-sqlite3"
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
-	"github.com/prysmaticlabs/go-bitfield"
 	"github.com/rs/zerolog"
 	"github.com/xitongsys/parquet-go-source/local"
 	"github.com/xitongsys/parquet-go/writer"
 )
 
+const BATCH_SIZE = 1024
+
+type ConsumerConfig struct {
+	LogLevel string
+	NatsURL  string
+	Name     string
+	ChCfg    ch.ClickhouseConfig
+}
+
 type Consumer struct {
-	log                    zerolog.Logger
-	peerDiscoveredWriter   *writer.ParquetWriter
-	metadataReceivedWriter *writer.ParquetWriter
-	validatorWriter        *writer.ParquetWriter
-	js                     jetstream.JetStream
+	log             zerolog.Logger
+	discoveryWriter *writer.ParquetWriter
+	metadataWriter  *writer.ParquetWriter
+	validatorWriter *writer.ParquetWriter
+	js              jetstream.JetStream
+
+	validatorMetadataChan chan *types.MetadataReceivedEvent
+
+	chClient *ch.ClickhouseClient
+	db       *sql.DB
 }
 
-type ParquetPeerDiscoveredEvent struct {
-	ENR        string `parquet:"name=enr, type=BYTE_ARRAY, convertedtype=UTF8"`
-	ID         string `parquet:"name=id, type=BYTE_ARRAY, convertedtype=UTF8"`
-	IP         string `parquet:"name=ip, type=BYTE_ARRAY, convertedtype=UTF8"`
-	Port       int    `parquet:"name=port, type=INT32"`
-	CrawlerID  string `parquet:"name=crawler_id, type=BYTE_ARRAY, convertedtype=UTF8"`
-	CrawlerLoc string `parquet:"name=crawler_location, type=BYTE_ARRAY, convertedtype=UTF8"`
-	Timestamp  int64  `parquet:"name=timestamp, type=INT64"`
-}
-
-type ParquetMetadataReceivedEvent struct {
-	ENR           string         `parquet:"name=enr, type=BYTE_ARRAY, convertedtype=UTF8"`
-	ID            string         `parquet:"name=id, type=BYTE_ARRAY, convertedtype=UTF8"`
-	Multiaddr     string         `parquet:"name=multiaddr, type=BYTE_ARRAY, convertedtype=UTF8"`
-	Epoch         int            `parquet:"name=epoch, type=INT32"`
-	MetaData      SimpleMetaData `parquet:"name=metadata, type=BYTE_ARRAY, convertedtype=UTF8"`
-	ClientVersion string         `parquet:"name=client_version, type=BYTE_ARRAY, convertedtype=UTF8"`
-	CrawlerID     string         `parquet:"name=crawler_id, type=BYTE_ARRAY, convertedtype=UTF8"`
-	CrawlerLoc    string         `parquet:"name=crawler_location, type=BYTE_ARRAY, convertedtype=UTF8"`
-	Timestamp     int64          `parquet:"name=timestamp, type=INT64"`
-}
-
-type ParquetValidatorEvent struct {
-	ENR               string         `parquet:"name=enr, type=BYTE_ARRAY, convertedtype=UTF8"`
-	ID                string         `parquet:"name=id, type=BYTE_ARRAY, convertedtype=UTF8"`
-	Multiaddr         string         `parquet:"name=multiaddr, type=BYTE_ARRAY, convertedtype=UTF8"`
-	Epoch             int            `parquet:"name=epoch, type=INT32"`
-	MetaData          SimpleMetaData `parquet:"name=metadata, type=BYTE_ARRAY, convertedtype=UTF8"`
-	LongLivedSubnets  []int64        `parquet:"name=long_lived_subnets, type=LIST, valuetype=INT64"`
-	SubscribedSubnets []int64        `parquet:"name=subscribed_subnets, type=LIST, valuetype=INT64"`
-	ClientVersion     string         `parquet:"name=client_version, type=BYTE_ARRAY, convertedtype=UTF8"`
-	CrawlerID         string         `parquet:"name=crawler_id, type=BYTE_ARRAY, convertedtype=UTF8"`
-	CrawlerLoc        string         `parquet:"name=crawler_location, type=BYTE_ARRAY, convertedtype=UTF8"`
-	Timestamp         int64          `parquet:"name=timestamp, type=INT64"`
-}
-
-type SimpleMetaData struct {
-	SeqNumber int64  `parquet:"name=seq_number, type=INT64"`
-	Attnets   string `parquet:"name=attnets, type=BYTE_ARRAY, convertedtype=UTF8"`
-	Syncnets  string `parquet:"name=syncnets, type=BYTE_ARRAY, convertedtype=UTF8"`
-}
-
-func RunConsumer(natsURL string) {
+func RunConsumer(cfg *ConsumerConfig) {
+	// Set up logging
 	log := log.NewLogger("consumer")
 
-	nc, err := nats.Connect(natsURL)
+	// Set up the sqlite database
+	db, err := sql.Open("sqlite3", "./validator_tracker.sqlite")
 	if err != nil {
-		log.Fatal().Err(err).Msg("Error connecting to NATS")
+		log.Error().Err(err).Msg("Error opening database")
+	}
+	defer db.Close()
+
+	err = setupDatabase(db)
+	if err != nil {
+		log.Error().Err(err).Msg("Error setting up database")
+	}
+
+	err = loadIPMetadataFromCSV(db, "ip_metadata.csv")
+	if err != nil {
+		log.Error().Err(err).Msg("Error setting up database")
+	}
+
+	log.Info().Msg("Sqlite DB setup complete")
+
+	// Set up NATS
+	nc, err := nats.Connect(cfg.NatsURL)
+	if err != nil {
+		log.Error().Err(err).Msg("Error connecting to NATS")
 	}
 	defer nc.Close()
 
 	js, err := jetstream.New(nc)
 	if err != nil {
-		log.Fatal().Err(err).Msg("Error creating JetStream context")
+		log.Error().Err(err).Msg("Error creating JetStream context")
 	}
 
-	w_peer, err := local.NewLocalFileWriter("discovery_events.parquet")
+	// Create Parquet writer files
+	w_discovery, err := local.NewLocalFileWriter("discovery_events.parquet")
 	if err != nil {
-		log.Fatal().Err(err).Msg("Error creating peer_discovered parquet file")
+		log.Error().Err(err).Msg("Error creating discovery events parquet file")
 	}
-	defer w_peer.Close()
+	defer w_discovery.Close()
 
 	w_metadata, err := local.NewLocalFileWriter("metadata_events.parquet")
 	if err != nil {
-		log.Fatal().Err(err).Msg("Error creating metadata_received parquet file")
+		log.Error().Err(err).Msg("Error creating metadata events parquet file")
 	}
 	defer w_metadata.Close()
 
 	w_validator, err := local.NewLocalFileWriter("validator_metadata_events.parquet")
 	if err != nil {
-		log.Fatal().Err(err).Msg("Error creating validator parquet file")
+		log.Error().Err(err).Msg("Error creating validator parquet file")
 	}
+	defer w_validator.Close()
 
-	metadataReceivedWriter, err := writer.NewParquetWriter(w_metadata, new(ParquetMetadataReceivedEvent), 4)
+	// Set up Parquet writers
+	discoveryWriter, err := writer.NewParquetWriter(w_discovery, new(types.PeerDiscoveredEvent), 4)
 	if err != nil {
-		log.Fatal().Err(err).Msg("Error creating Metadata Parquet writer")
+		log.Error().Err(err).Msg("Error creating Peer discovered Parquet writer")
 	}
 	defer func() {
-		if err := metadataReceivedWriter.WriteStop(); err != nil {
-			fmt.Printf("Error stopping Metadata Parquet writer: %v\n", err)
-		} else {
-			fmt.Println("Stopped Metadata Parquet writer")
-		}
+		discoveryWriter.WriteStop()
+		log.Info().Msg("Stopped Discovery Parquet writer")
 	}()
 
-	peerDiscoveredWriter, err := writer.NewParquetWriter(w_peer, new(ParquetPeerDiscoveredEvent), 4)
+	metadataWriter, err := writer.NewParquetWriter(w_metadata, new(types.MetadataReceivedEvent), 4)
 	if err != nil {
-		log.Fatal().Err(err).Msg("Error creating Peer discovered Parquet writer")
+		log.Error().Err(err).Msg("Error creating Metadata Parquet writer")
 	}
 	defer func() {
-		if err := peerDiscoveredWriter.WriteStop(); err != nil {
-			fmt.Printf("Error stopping Peer discovered Parquet writer: %v\n", err)
-		} else {
-			fmt.Println("Stopped Peer discovered Parquet writer")
-		}
+		metadataWriter.WriteStop()
+		log.Info().Msg("Stopped Metadata Parquet writer")
 	}()
 
-	validatorWriter, err := writer.NewParquetWriter(w_validator, new(ParquetValidatorEvent), 4)
+	validatorWriter, err := writer.NewParquetWriter(w_validator, new(types.ValidatorEvent), 4)
 	if err != nil {
-		log.Fatal().Err(err).Msg("Error creating Validator Parquet writer")
+		log.Error().Err(err).Msg("Error creating Validator Parquet writer")
 	}
 	defer func() {
-		if err := validatorWriter.WriteStop(); err != nil {
-			fmt.Printf("Error stopping Validator Parquet writer: %v\n", err)
-		} else {
-			fmt.Println("Stopped Validator Parquet writer")
-		}
+		validatorWriter.WriteStop()
+		log.Info().Msg("Stopped Validator Parquet writer")
 	}()
+
+	// Set up Clickhouse client
+	chCfg := ch.ClickhouseConfig{
+		Endpoint: cfg.ChCfg.Endpoint,
+		DB:       cfg.ChCfg.DB,
+		Username: cfg.ChCfg.Username,
+		Password: cfg.ChCfg.Password,
+
+		MaxValidatorBatchSize: cfg.ChCfg.MaxValidatorBatchSize,
+	}
+
+	var chClient *ch.ClickhouseClient
+	if chCfg.Endpoint != "" {
+		chClient, err = ch.NewClickhouseClient(&chCfg)
+		if err != nil {
+			log.Error().Err(err).Msg("Error creating Clickhouse client")
+		}
+
+		err = chClient.Start()
+		if err != nil {
+			log.Error().Err(err).Msg("Error starting Clickhouse client")
+		}
+	}
 
 	consumer := Consumer{
-		log:                    log,
-		peerDiscoveredWriter:   peerDiscoveredWriter,
-		metadataReceivedWriter: metadataReceivedWriter,
-		validatorWriter:        validatorWriter,
-		js:                     js,
+		log:             log,
+		discoveryWriter: discoveryWriter,
+		metadataWriter:  metadataWriter,
+		validatorWriter: validatorWriter,
+		js:              js,
+
+		validatorMetadataChan: make(chan *types.MetadataReceivedEvent, 16384),
+
+		chClient: chClient,
+		db:       db,
 	}
 
-	cctx, err := eventSourcingConsumer(consumer)
-	if err != nil {
-		log.Fatal().Err(err).Msg("Error creating consumer")
+	// Start the consumer
+	go func() {
+		if err := consumer.Start(cfg.Name); err != nil {
+			log.Error().Err(err).Msg("Error in consumer")
+		}
+	}()
+
+	ipInfoToken := os.Getenv("IPINFO_TOKEN")
+	if ipInfoToken == "" {
+		log.Error().Msg("IPINFO_TOKEN environment variable is required")
 	}
-	defer cctx.Stop()
+
+	go consumer.runValidatorMetadataEventHandler(ipInfoToken)
+
+	// Set up HTTP server
+	server := &http.Server{Addr: ":8080", Handler: nil}
+	http.HandleFunc("/validators", createGetValidatorsHandler(db))
+
+	go func() {
+		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Error().Err(err).Msg("Error starting HTTP server")
+		}
+	}()
+	defer func() {
+		server.Shutdown(context.Background())
+	}()
 
 	// Gracefully shutdown
 	quit := make(chan os.Signal, 1)
@@ -157,119 +196,113 @@ func RunConsumer(natsURL string) {
 	<-quit
 }
 
-func eventSourcingConsumer(cons Consumer) (jetstream.ConsumeContext, error) {
-	ctx := context.Background()
-
-	uniqueID := uuid.New().String()
+func (c *Consumer) Start(name string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
 
 	// Set up a consumer
 	consumerCfg := jetstream.ConsumerConfig{
-		Name:        fmt.Sprintf("consumer-%s", uniqueID),
-		Durable:     fmt.Sprintf("consumer-%s", uniqueID),
+		Name:        name,
+		Durable:     name,
 		Description: "Consumes valtrack events",
 		AckPolicy:   jetstream.AckExplicitPolicy,
 	}
 
-	consumer, err := cons.js.CreateOrUpdateConsumer(ctx, "EVENTS", consumerCfg)
+	// TODO: Change the stream name to 'valtrack'
+	stream, err := c.js.Stream(ctx, "EVENTS")
 	if err != nil {
-		return nil, err
+		c.log.Error().Err(err).Msg("Error opening valtrack jetstream")
+		return err
 	}
 
-	return consumer.Consume(func(msg jetstream.Msg) {
-		handleMessage(cons, msg)
-	})
+	consumer, err := stream.CreateOrUpdateConsumer(ctx, consumerCfg)
+	if err != nil {
+		c.log.Error().Err(err).Msg("Error creating consumer")
+		return err
+	}
+
+	go func() {
+		for {
+			batch, err := consumer.FetchNoWait(BATCH_SIZE)
+			if err != nil {
+				c.log.Error().Err(err).Msg("Error fetching batch of messages")
+				return
+			}
+			if err = batch.Error(); err != nil {
+				c.log.Error().Err(err).Msg("Error in messages batch")
+				return
+			}
+
+			for msg := range batch.Messages() {
+				handleMessage(c, msg)
+			}
+
+		}
+	}()
+
+	return nil
 }
 
-func handleMessage(cons Consumer, msg jetstream.Msg) {
-	MsgMetadata, _ := msg.Metadata()
+func handleMessage(c *Consumer, msg jetstream.Msg) {
+	md, _ := msg.Metadata()
+	progress := float64(md.Sequence.Stream) / (float64(md.NumPending) + float64(md.Sequence.Stream)) * 100
+
 	switch msg.Subject() {
 	case "events.peer_discovered":
-		var event ethereum.PeerDiscoveredEvent
+		var event types.PeerDiscoveredEvent
 		if err := json.Unmarshal(msg.Data(), &event); err != nil {
-			cons.log.Err(err).Msg("Error unmarshaling PeerDiscoveredEvent")
+			c.log.Err(err).Msg("Error unmarshaling PeerDiscoveredEvent")
 			msg.Term()
 			return
 		}
-		cons.log.Info().Any("seq", MsgMetadata.Sequence).Any("event", event).Msg("peer_discovered")
-		storePeerDiscoveredEvent(cons.peerDiscoveredWriter, event, cons.log)
+
+		c.log.Info().Time("timestamp", md.Timestamp).Uint64("pending", md.NumPending).Str("progress", fmt.Sprintf("%.2f%%", progress)).Msg("peer_discovered")
+		c.storeDiscoveryEvent(event)
 
 	case "events.metadata_received":
-		var event ethereum.MetadataReceivedEvent
+		var event types.MetadataReceivedEvent
 		if err := json.Unmarshal(msg.Data(), &event); err != nil {
-			cons.log.Err(err).Msg("Error unmarshaling MetadataReceivedEvent")
+			c.log.Err(err).Msg("Error unmarshaling MetadataReceivedEvent")
 			msg.Term()
 			return
 		}
-		cons.log.Info().Any("seq", MsgMetadata.Sequence).Any("event", event).Msg("metadata_received")
-		storeValidatorEvent(cons.validatorWriter, event, cons.log)
-		storeMetadataReceivedEvent(cons.metadataReceivedWriter, event, cons.log)
+
+		c.log.Info().Time("timestamp", md.Timestamp).Uint64("pending", md.NumPending).Str("progress", fmt.Sprintf("%.2f%%", progress)).Msg("metadata_received")
+		c.handleMetadataEvent(event)
+		c.storeMetadataEvent(event)
 
 	default:
-		cons.log.Warn().Str("subject", msg.Subject()).Msg("Unknown event type")
+		c.log.Warn().Str("subject", msg.Subject()).Msg("Unknown event type")
 	}
 
 	if err := msg.Ack(); err != nil {
-		cons.log.Err(err).Msg("Error acknowledging message")
+		c.log.Err(err).Msg("Error acknowledging message")
 	}
 }
 
-func indexesFromBitfield(bitV bitfield.Bitvector64) []int64 {
-	indexes := make([]int64, 0, bitV.Len())
-
-	for i := int64(0); i < 64; i++ {
-		if bitV.BitAt(uint64(i)) {
-			indexes = append(indexes, i)
-		}
-	}
-
-	return indexes
-}
-
-// TODO: is this correct
-func extractShortLivedSubnets(subscribed []int64, longLived []int64) []int64 {
-	var shortLived []int64
-	for i := 0; i < 64; i++ {
-		if contains(subscribed, int64(i)) && !contains(longLived, int64(i)) {
-			shortLived = append(shortLived, int64(i))
-		}
-	}
-
-	return shortLived
-}
-
-func contains[T comparable](slice []T, item T) bool {
-	for _, i := range slice {
-		if i == item {
-			return true
-		}
-	}
-	return false
-}
-
-func storeValidatorEvent(pw *writer.ParquetWriter, event ethereum.MetadataReceivedEvent, log zerolog.Logger) {
+func (c *Consumer) handleMetadataEvent(event types.MetadataReceivedEvent) {
 	// Extract the long lived subnets from the metadata
 	longLived := indexesFromBitfield(event.MetaData.Attnets)
 
-	log.Info().Any("long_lived_subnets", longLived).Any("subscribed_subnets", event.SubscribedSubnets).Msg("Checking for validator")
+	c.log.Info().Str("peer", event.ID).Any("long_lived_subnets", longLived).Any("subscribed_subnets", event.SubscribedSubnets).Msg("Checking for validator")
 
-	if len(extractShortLivedSubnets(event.SubscribedSubnets, longLived)) == 0 {
+	if len(extractShortLivedSubnets(event.SubscribedSubnets, longLived)) == 0 || len(longLived) != 2 {
 		// If the subscribed subnets and the longLived subnets are the same,
-		// then there's probably no validator
+		// then there's probably no validator OR
+		// If the longLived subnets are not equal to 2
 		return
 	}
 
-	simpleMetaData := SimpleMetaData{
-		SeqNumber: int64(event.MetaData.SeqNumber),
-		Attnets:   hex.EncodeToString(event.MetaData.Attnets),
-		Syncnets:  hex.EncodeToString(event.MetaData.Syncnets),
-	}
+	c.validatorMetadataChan <- &event
 
-	parquetEvent := ParquetValidatorEvent{
+	validatorEvent := types.ValidatorEvent{
 		ENR:               event.ENR,
 		ID:                event.ID,
 		Multiaddr:         event.Multiaddr,
-		Epoch:             int(event.Epoch),
-		MetaData:          simpleMetaData,
+		Epoch:             event.Epoch,
+		SeqNumber:         event.MetaData.SeqNumber,
+		Attnets:           hex.EncodeToString(event.MetaData.Attnets),
+		Syncnets:          hex.EncodeToString(event.MetaData.Syncnets),
 		ClientVersion:     event.ClientVersion,
 		CrawlerID:         event.CrawlerID,
 		CrawlerLoc:        event.CrawlerLoc,
@@ -278,52 +311,30 @@ func storeValidatorEvent(pw *writer.ParquetWriter, event ethereum.MetadataReceiv
 		SubscribedSubnets: event.SubscribedSubnets,
 	}
 
-	if err := pw.Write(parquetEvent); err != nil {
-		log.Err(err).Msg("Failed to write validator event to Parquet file")
+	if c.chClient != nil {
+		c.chClient.ValidatorEventChan <- &validatorEvent
+		c.log.Info().Any("validator_event", validatorEvent).Msg("Inserted validator event")
+	}
+
+	if err := c.validatorWriter.Write(validatorEvent); err != nil {
+		c.log.Err(err).Msg("Failed to write validator event to Parquet file")
 	} else {
-		log.Trace().Msg("Wrote validator event to Parquet file")
+		c.log.Trace().Msg("Wrote validator event to Parquet file")
 	}
 }
 
-func storePeerDiscoveredEvent(pw *writer.ParquetWriter, event ethereum.PeerDiscoveredEvent, log zerolog.Logger) {
-	parquetEvent := ParquetPeerDiscoveredEvent{
-		ENR:        event.ENR,
-		ID:         event.ID,
-		IP:         event.IP,
-		Port:       int(event.Port),
-		CrawlerID:  event.CrawlerID,
-		CrawlerLoc: event.CrawlerLoc,
-		Timestamp:  event.Timestamp,
-	}
-
-	if err := pw.Write(parquetEvent); err != nil {
-		log.Err(err).Msg("Failed to write peer_discovered event to Parquet file")
+func (c *Consumer) storeDiscoveryEvent(event types.PeerDiscoveredEvent) {
+	if err := c.discoveryWriter.Write(event); err != nil {
+		c.log.Err(err).Msg("Failed to write discovery event to Parquet file")
 	} else {
-		log.Trace().Msg("Wrote peer_discovered event to Parquet file")
+		c.log.Trace().Msg("Wrote discovery event to Parquet file")
 	}
 }
 
-func storeMetadataReceivedEvent(pw *writer.ParquetWriter, event ethereum.MetadataReceivedEvent, log zerolog.Logger) {
-	simpleMetaData := SimpleMetaData{
-		SeqNumber: int64(event.MetaData.SeqNumber),
-		Attnets:   hex.EncodeToString(event.MetaData.Attnets),
-		Syncnets:  hex.EncodeToString(event.MetaData.Syncnets),
-	}
-
-	parquetEvent := ParquetMetadataReceivedEvent{
-		ID:            event.ID,
-		Multiaddr:     event.Multiaddr,
-		Epoch:         int(event.Epoch),
-		MetaData:      simpleMetaData,
-		ClientVersion: event.ClientVersion,
-		CrawlerID:     event.CrawlerID,
-		CrawlerLoc:    event.CrawlerLoc,
-		Timestamp:     event.Timestamp,
-	}
-
-	if err := pw.Write(parquetEvent); err != nil {
-		log.Err(err).Msg("Failed to write metadata_received event to Parquet file")
+func (c *Consumer) storeMetadataEvent(event types.MetadataReceivedEvent) {
+	if err := c.metadataWriter.Write(event); err != nil {
+		c.log.Err(err).Msg("Failed to write metadata event to Parquet file")
 	} else {
-		log.Trace().Msg("Wrote metadata_received event to Parquet file")
+		c.log.Trace().Msg("Wrote metadata event to Parquet file")
 	}
 }
