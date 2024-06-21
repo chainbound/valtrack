@@ -43,10 +43,9 @@ func indexesFromBitfield(bitV bitfield.Bitvector64) []int64 {
 	return indexes
 }
 
-// TODO: is this correct
 func extractShortLivedSubnets(subscribed []int64, longLived []int64) []int64 {
 	var shortLived []int64
-	for i := 0; i < 64; i++ {
+	for i := 1; i <= 64; i++ {
 		if contains(subscribed, int64(i)) && !contains(longLived, int64(i)) {
 			shortLived = append(shortLived, int64(i))
 		}
@@ -64,6 +63,7 @@ func contains[T comparable](slice []T, item T) bool {
 	return false
 }
 
+// NOTE: Not used, validator tracker logic changed
 func ComputeNewAverage(prevAvg int32, prevCount uint64, currValidatorCount int) int32 {
 	sum := int64(prevCount)*int64(prevAvg) + int64(currValidatorCount)
 	newCount := int64(prevCount + 1)

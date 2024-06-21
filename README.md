@@ -128,8 +128,8 @@ jetstreamCfg := jetstream.StreamConfig{
 	}
 ```
 
-- RetentionPolicy is set to InterestPolicy, which means that the messages are retained based on the consumer interest in the messages. The messages are retained until they're acknowledged by all the consumers. If there are no consumers, the messages are not retained. [DOCS](https://docs.nats.io/nats-concepts/jetstream/streams#retentionpolicy)
-- The subjects are the NATS subjects where the sentry data is published.
+-   RetentionPolicy is set to InterestPolicy, which means that the messages are retained based on the consumer interest in the messages. The messages are retained until they're acknowledged by all the consumers. If there are no consumers, the messages are not retained. [DOCS](https://docs.nats.io/nats-concepts/jetstream/streams#retentionpolicy)
+-   The subjects are the NATS subjects where the sentry data is published.
 
 #### Consumer Configuration
 
@@ -145,37 +145,30 @@ consumerCfg := jetstream.ConsumerConfig{
 	}
 ```
 
-- Durable is set, which means that the consumer will be binded until explicitly deleted.
-- AckPolicy is set to AckExplicitPolicy, which means that the consumer has to explicitly acknowledge the message. [DOCS](https://docs.nats.io/nats-concepts/jetstream/consumers#ackpolicy)
+-   Durable is set, which means that the consumer will be binded until explicitly deleted.
+-   AckPolicy is set to AckExplicitPolicy, which means that the consumer has to explicitly acknowledge the message. [DOCS](https://docs.nats.io/nats-concepts/jetstream/consumers#ackpolicy)
 
-#### Useful Commands
+### API Usage
 
--   Check stream info
+The consumer will expose an API to query the data stored in the database. The API will be a REST API.
 
-```shell
-nats stream info <STREAM_NAME> --server <NATS_URL>
-```
-
--   Delete stream
+Public access (regular user, no key required):
 
 ```shell
-nats stream rm <STREAM_NAME> --server <NATS_URL>
+curl http://localhost:8080/validators
 ```
 
--   Check consumer info
+Admin access (requires an API key):
 
 ```shell
-nats consumer ls <STREAM_NAME> --server <NATS_URL>
+curl -H "X-API-KEY: <API-KEY>" http://localhost:8080/validators
 ```
 
--   Delete consumer
-
-```shell
-nats consumer rm <STREAM_NAME> <CONSUMER_NAME> --server <NATS_URL>
-```
+API keys can be added in the `api_keys.txt` file.
 
 ## Credits
 
 Shoutout to the following projects for inspiration and reference:
+
 -   [Hermes](https://github.com/probe-lab/hermes)
 -   [Armiarma](https://github.com/migalabs/armiarma/)

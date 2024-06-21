@@ -8,6 +8,7 @@ require (
 	github.com/ethereum/go-ethereum v1.14.0
 	github.com/ferranbt/fastssz v0.1.2
 	github.com/google/uuid v1.6.0
+	github.com/ipinfo/go/v2 v2.10.0
 	github.com/libp2p/go-libp2p v0.33.1
 	github.com/libp2p/go-libp2p-mplex v0.9.0
 	github.com/libp2p/go-libp2p-pubsub v0.10.1
