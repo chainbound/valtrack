@@ -59,7 +59,7 @@ func createGetValidatorsHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		apiKey := r.Header.Get("X-API-Key")
 
-		isAdmin, _ := loadAPIKeys("api_keys.env", apiKey)
+		isAdmin, _ := loadAPIKeys("api_keys.txt", apiKey)
 
 		rows, err := db.Query(selectQuery)
 		if err != nil {
