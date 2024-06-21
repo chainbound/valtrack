@@ -50,7 +50,7 @@ func RunConsumer(cfg *ConsumerConfig) {
 	log := log.NewLogger("consumer")
 
 	// Read the API keys
-	apiKeys, err := LoadAPIKeys("api_keys.txt")
+	apiKeys, err := LoadAPIKeys("api_keys.env")
 	if err != nil {
 		log.Error().Err(err).Msg("Error reading API keys")
 	}
