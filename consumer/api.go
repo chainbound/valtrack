@@ -37,10 +37,10 @@ type ValidatorTracker struct {
 var selectQuery = `SELECT peer_id, enr, multiaddr, validator_tracker.ip, port, last_seen, last_epoch, client_version, possible_validator, max_validator_count, num_observations, hostname, city, region, country, latitude, longitude, postal_code, asn, asn_organization, asn_type FROM validator_tracker JOIN ip_metadata ON validator_tracker.ip = ip_metadata.ip`
 
 // LoadAPIKeys reads the API keys from a file and returns a map of keys
-func LoadAPIKeys(filePath string) (map[string]bool, error) {
+func loadAPIKeys(filePath string, apiKey string) (bool, error) {
 	file, err := os.Open(filePath)
 	if err != nil {
-		return nil, err
+		return false, err
 	}
 	defer file.Close()
 
@@ -52,13 +52,14 @@ func LoadAPIKeys(filePath string) (map[string]bool, error) {
 			apiKeys[line] = true
 		}
 	}
-	return apiKeys, scanner.Err()
+	return apiKeys[apiKey], scanner.Err()
 }
 
-func createGetValidatorsHandler(db *sql.DB, apiKeys map[string]bool) http.HandlerFunc {
+func createGetValidatorsHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		apiKey := r.Header.Get("API-Key")
-		isAdmin := apiKeys[apiKey]
+		apiKey := r.Header.Get("X-API-Key")
+
+		isAdmin, _ := loadAPIKeys("api_keys.env", apiKey)
 
 		rows, err := db.Query(selectQuery)
 		if err != nil {
@@ -78,6 +79,7 @@ func createGetValidatorsHandler(db *sql.DB, apiKeys map[string]bool) http.Handle
 
 			// If the user is not an admin, we should not return the sensitive data
 			if !isAdmin {
+				vm.ENR = ""
 				vm.Multiaddr = ""
 				vm.IP = ""
 				vm.Latitude = 0
