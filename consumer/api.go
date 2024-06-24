@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"os"
 	"strings"
@@ -82,8 +83,8 @@ func createGetValidatorsHandler(db *sql.DB) http.HandlerFunc {
 				vm.ENR = ""
 				vm.Multiaddr = ""
 				vm.IP = ""
-				vm.Latitude = 0
-				vm.Longitude = 0
+				vm.Latitude = math.Round(vm.Latitude*10) / 10
+				vm.Longitude = math.Round(vm.Longitude*10) / 10
 			}
 			validators = append(validators, vm)
 		}
