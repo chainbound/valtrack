@@ -13,9 +13,9 @@ import (
 
 type ValidatorTracker struct {
 	PeerID            string  `json:"peer_id"`
-	ENR               string  `json:"enr"`
-	Multiaddr         string  `json:"multiaddr"`
-	IP                string  `json:"ip"`
+	ENR               string  `json:"enr,omitempty"`
+	Multiaddr         string  `json:"multiaddr,omitempty"`
+	IP                string  `json:"ip,omitempty"`
 	Port              int     `json:"port"`
 	LastSeen          int     `json:"last_seen"`
 	LastEpoch         int     `json:"last_epoch"`
