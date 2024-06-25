@@ -76,6 +76,9 @@ func createGetValidatorsHandler(db *sql.DB) http.HandlerFunc {
 
 		isAdmin, _ := loadAPIKeys("api_keys.txt", apiKey)
 
+		// Map to store unique entries per peer_id
+		peerIDMap := make(map[string]ValidatorTracker)
+
 		rows, err := db.Query(selectQuery)
 		if err != nil {
 			http.Error(w, "Error querying database", http.StatusInternalServerError)
@@ -106,6 +109,16 @@ func createGetValidatorsHandler(db *sql.DB) http.HandlerFunc {
 				vm.Latitude = math.Round(vm.Latitude*10) / 10
 				vm.Longitude = math.Round(vm.Longitude*10) / 10
 			}
+
+			// Check if this peer_id already exists in the map and update if necessary
+			existing, ok := peerIDMap[vm.PeerID]
+			if !ok || vm.ValidatorCount > existing.ValidatorCount {
+				peerIDMap[vm.PeerID] = vm
+			}
+
+		}
+
+		for _, vm := range peerIDMap {
 			validators = append(validators, vm)
 		}
 
