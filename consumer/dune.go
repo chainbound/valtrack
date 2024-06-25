@@ -43,7 +43,6 @@ type ValidatorNonAdminTracker struct {
 	LastEpoch         int     `json:"last_epoch"`
 	ClientVersion     string  `json:"client_version"`
 	MaxValidatorCount int     `json:"max_validator_count"`
-	NumObservations   int     `json:"num_observations"`
 	City              string  `json:"city"`
 	Region            string  `json:"region"`
 	Country           string  `json:"country"`
@@ -219,7 +218,6 @@ func (c *Consumer) publishToDune() error {
 		{Name: "last_epoch", Type: "integer", Nullable: true},
 		{Name: "client_version", Type: "varchar", Nullable: true},
 		{Name: "max_validator_count", Type: "integer", Nullable: true},
-		{Name: "num_observations", Type: "integer", Nullable: true},
 		{Name: "city", Type: "varchar", Nullable: true},
 		{Name: "region", Type: "varchar", Nullable: true},
 		{Name: "country", Type: "varchar", Nullable: true},
