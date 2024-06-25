@@ -36,22 +36,23 @@ type Column struct {
 }
 
 type ValidatorNonAdminTracker struct {
-	PeerID            string  `json:"peer_id"`
-	Port              int     `json:"port"`
-	LastSeen          int     `json:"last_seen"`
-	LastSeenDate      string  `json:"last_seen_date"`
-	LastEpoch         int     `json:"last_epoch"`
-	ClientVersion     string  `json:"client_version"`
-	MaxValidatorCount int     `json:"max_validator_count"`
-	City              string  `json:"city"`
-	Region            string  `json:"region"`
-	Country           string  `json:"country"`
-	Latitude          float64 `json:"latitude"`
-	Longitude         float64 `json:"longitude"`
-	PostalCode        string  `json:"postal_code"`
-	ASN               string  `json:"asn"`
-	ASNOrganization   string  `json:"asn_organization"`
-	ASNType           string  `json:"asn_type"`
+	PeerID                 string  `json:"peer_id"`
+	Port                   int     `json:"port"`
+	LastSeen               int     `json:"last_seen"`
+	LastSeenDate           string  `json:"last_seen_date"`
+	LastEpoch              int     `json:"last_epoch"`
+	ClientVersion          string  `json:"client_version"`
+	ValidatorCount         int     `json:"validator_count"`
+	ValidatorCountAccuracy float64 `json:"validator_count_accuracy"`
+	City                   string  `json:"city"`
+	Region                 string  `json:"region"`
+	Country                string  `json:"country"`
+	Latitude               float64 `json:"latitude"`
+	Longitude              float64 `json:"longitude"`
+	PostalCode             string  `json:"postal_code"`
+	ASN                    string  `json:"asn"`
+	ASNOrganization        string  `json:"asn_organization"`
+	ASNType                string  `json:"asn_type"`
 }
 
 type Dune struct {
@@ -217,7 +218,8 @@ func (c *Consumer) publishToDune() error {
 		{Name: "last_seen_date", Type: "timestamp", Nullable: true},
 		{Name: "last_epoch", Type: "integer", Nullable: true},
 		{Name: "client_version", Type: "varchar", Nullable: true},
-		{Name: "max_validator_count", Type: "integer", Nullable: true},
+		{Name: "validator_count", Type: "integer", Nullable: true},
+		{Name: "validator_count_accuracy", Type: "double", Nullable: true},
 		{Name: "city", Type: "varchar", Nullable: true},
 		{Name: "region", Type: "varchar", Nullable: true},
 		{Name: "country", Type: "varchar", Nullable: true},
