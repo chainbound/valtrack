@@ -38,7 +38,7 @@ type ValidatorTracker struct {
 var selectQuery = `
 SELECT vt.peer_id, vt.enr, vt.multiaddr, vt.ip, vt.port, vt.last_seen, vt.last_epoch,
 	   vt.client_version, vc.validator_count, 
-	   CAST(vc.n_observations AS FLOAT) / vt.num_observations AS validator_count_accuracy,
+	   CAST(vc.n_observations AS FLOAT) / vt.total_observations AS validator_count_accuracy,
 	   im.hostname, im.city, im.region, im.country, im.latitude, im.longitude,
 	   im.postal_code, im.asn, im.asn_organization, im.asn_type
 FROM validator_tracker vt

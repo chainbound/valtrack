@@ -26,7 +26,7 @@ var (
         last_seen INTEGER,
         last_epoch INTEGER,
 		client_version TEXT,
-		num_observations INTEGER
+		total_observations INTEGER
     );
     `
 
@@ -55,12 +55,12 @@ var (
 	);`
 
 	insertTrackerQuery = `
-		INSERT INTO validator_tracker (peer_id, enr, multiaddr, ip, port, last_seen, last_epoch, client_version, num_observations)
+		INSERT INTO validator_tracker (peer_id, enr, multiaddr, ip, port, last_seen, last_epoch, client_version, total_observations)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);`
 
 	updateTrackerQuery = `
 		UPDATE validator_tracker
-		SET enr = ?, multiaddr = ?, ip = ?, port = ?, last_seen = ?, last_epoch = ?, client_version = ?, num_observations = ?
+		SET enr = ?, multiaddr = ?, ip = ?, port = ?, last_seen = ?, last_epoch = ?, client_version = ?, total_observations = ?
 		WHERE peer_id = ?;`
 
 	selectIpMetadataQuery = `SELECT * FROM ip_metadata WHERE ip = ?`
@@ -230,7 +230,7 @@ func (c *Consumer) runValidatorMetadataEventHandler(token string) error {
 		currValidatorCount := len(shortLived)
 
 		var prevNumObservations int
-		err = c.db.QueryRow("SELECT num_observations FROM validator_tracker WHERE peer_id = ?", event.ID).Scan(&prevNumObservations)
+		err = c.db.QueryRow("SELECT total_observations FROM validator_tracker WHERE peer_id = ?", event.ID).Scan(&prevNumObservations)
 
 		if err == sql.ErrNoRows {
 			// Insert new row
