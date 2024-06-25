@@ -25,7 +25,8 @@ var (
         port INTEGER,
         last_seen INTEGER,
         last_epoch INTEGER,
-		client_version TEXT
+		client_version TEXT,
+		num_observations INTEGER
     );
     `
 
@@ -54,12 +55,12 @@ var (
 	);`
 
 	insertTrackerQuery = `
-		INSERT INTO validator_tracker (peer_id, enr, multiaddr, ip, port, last_seen, last_epoch, client_version)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?);`
+		INSERT INTO validator_tracker (peer_id, enr, multiaddr, ip, port, last_seen, last_epoch, client_version, num_observations)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);`
 
 	updateTrackerQuery = `
 		UPDATE validator_tracker
-		SET enr = ?, multiaddr = ?, ip = ?, port = ?, last_seen = ?, last_epoch = ?, client_version = ?
+		SET enr = ?, multiaddr = ?, ip = ?, port = ?, last_seen = ?, last_epoch = ?, client_version = ?, num_observations = ?
 		WHERE peer_id = ?;`
 
 	selectIpMetadataQuery = `SELECT * FROM ip_metadata WHERE ip = ?`
@@ -228,15 +229,12 @@ func (c *Consumer) runValidatorMetadataEventHandler(token string) error {
 		// is subscribed to a single subnet for a 1 epoch duration
 		currValidatorCount := len(shortLived)
 
-		var exists bool
-		query := "SELECT EXISTS(SELECT 1 FROM validator_tracker WHERE peer_id = ?)"
-
-		// QueryRow executes a query that is expected to return at most one row.
-		err = c.db.QueryRow(query, event.ID).Scan(&exists)
+		var prevNumObservations int
+		err = c.db.QueryRow("SELECT num_observations FROM validator_tracker WHERE peer_id = ?", event.ID).Scan(&prevNumObservations)
 
 		if err == sql.ErrNoRows {
 			// Insert new row
-			_, err = tx.Exec(insertTrackerQuery, event.ID, event.ENR, event.Multiaddr, ip, port, event.Timestamp, event.Epoch, event.ClientVersion)
+			_, err = tx.Exec(insertTrackerQuery, event.ID, event.ENR, event.Multiaddr, ip, port, event.Timestamp, event.Epoch, event.ClientVersion, 1)
 			if err != nil {
 				c.log.Error().Err(err).Msg("Error inserting row")
 			}
@@ -293,7 +291,7 @@ func (c *Consumer) runValidatorMetadataEventHandler(token string) error {
 			c.log.Error().Err(err).Msg("Error querying database")
 		} else {
 			// Update existing row
-			_, err = tx.Exec(updateTrackerQuery, event.ENR, event.Multiaddr, ip, port, event.Timestamp, event.Epoch, event.ClientVersion, event.ID)
+			_, err = tx.Exec(updateTrackerQuery, event.ENR, event.Multiaddr, ip, port, event.Timestamp, event.Epoch, event.ClientVersion, prevNumObservations+1, event.ID)
 			if err != nil {
 				c.log.Error().Err(err).Msg("Error updating row")
 			}
