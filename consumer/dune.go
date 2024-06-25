@@ -62,7 +62,7 @@ func createTable(namespace, tableName string, schema []Column) error {
 		TableName:   tableName,
 		Schema:      schema,
 		IsPrivate:   false,
-		Description: "Validator tracker data",
+		Description: "Ethereum validators location data",
 	}
 
 	jsonData, err := json.Marshal(requestBody)
@@ -221,14 +221,14 @@ func (c *Consumer) publishToDune() error {
 	}
 	c.log.Debug().Msg("Fetched data from API")
 
-	// Clear the data in the table
+	// Clear the old data in the table
 	err = clearTableData(namespace, tableName)
 	if err != nil {
 		return fmt.Errorf("failed to clear table data: %w", err)
 	}
 	c.log.Debug().Msg("Cleared table data in Dune")
 
-	// Insert the data into the table
+	// Insert the fresh data into the table
 	err = insertDataIntoTable(namespace, tableName, validators)
 	if err != nil {
 		return fmt.Errorf("failed to insert data into table: %w", err)

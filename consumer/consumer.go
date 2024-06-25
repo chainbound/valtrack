@@ -197,7 +197,7 @@ func RunConsumer(cfg *ConsumerConfig) {
 			log.Error().Err(err).Msg("Error publishing to Dune")
 		}
 
-		ticker := time.NewTicker(20 * time.Second)
+		ticker := time.NewTicker(24 * time.Hour) // Adjust the publishing time interval
 		defer ticker.Stop()
 
 		for range ticker.C {
