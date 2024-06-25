@@ -12,7 +12,7 @@ import (
 const (
 	duneAPIKey     = ""
 	namespace      = ""
-	tableName      = "validators_location"
+	tableName      = "validator_locations"
 	apiURL         = "http://localhost:8080/validators"
 	createEndpoint = "https://api.dune.com/api/v1/table/create"
 	clearEndpoint  = "https://api.dune.com/api/v1/table/%s/%s/clear"
@@ -125,7 +125,7 @@ func convertToReadableDate(unixTimestampMs int64) string {
 	t := time.Unix(unixTimestamp, 0)
 
 	// Format the time.Time object to a readable date string
-	return t.Format("2006-01-02")
+	return t.Format("2006-01-02 15:04:05")
 }
 
 // clearTableData clears the data in the Dune table
