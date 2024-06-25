@@ -191,15 +191,19 @@ func RunConsumer(cfg *ConsumerConfig) {
 	}()
 
 	// Start publishing to Dune periodically
+	log.Info().Msg("Starting to publish to Dune")
 	go func() {
-		log.Info().Msg("Starting Dune")
-		publishToDune()
+		if err := consumer.publishToDune(); err != nil {
+			log.Error().Err(err).Msg("Error publishing to Dune")
+		}
 
-		ticker := time.NewTicker(24 * time.Hour)
+		ticker := time.NewTicker(20 * time.Second)
 		defer ticker.Stop()
 
 		for range ticker.C {
-			publishToDune()
+			if err := consumer.publishToDune(); err != nil {
+				log.Error().Err(err).Msg("Error publishing to Dune")
+			}
 			log.Info().Msg("Published to Dune")
 		}
 	}()

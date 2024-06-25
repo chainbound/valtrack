@@ -6,11 +6,12 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"time"
 )
 
 const (
-	duneAPIKey     = "JulhHCwqZ1gydilA67KZfMGOmolLFRvt"
-	namespace      = "harry6996"
+	duneAPIKey     = ""
+	namespace      = ""
 	tableName      = "validators_location"
 	apiURL         = "http://localhost:8080/validators"
 	createEndpoint = "https://api.dune.com/api/v1/table/create"
@@ -37,6 +38,7 @@ type ValidatorNonAdminTracker struct {
 	PeerID            string  `json:"peer_id"`
 	Port              int     `json:"port"`
 	LastSeen          int     `json:"last_seen"`
+	LastSeenDate      string  `json:"last_seen_date"`
 	LastEpoch         int     `json:"last_epoch"`
 	ClientVersion     string  `json:"client_version"`
 	PossibleValidator bool    `json:"possible_validator"`
@@ -89,8 +91,6 @@ func createTable(namespace, tableName string, schema []Column) error {
 		return fmt.Errorf("HTTP error response: %d / %s", resp.StatusCode, string(bodyBytes))
 	}
 
-	fmt.Println("Created table in Dune")
-
 	return nil
 }
 
@@ -108,16 +108,30 @@ func fetchDataFromAPI(url string) ([]ValidatorNonAdminTracker, error) {
 		return nil, fmt.Errorf("failed to decode API response: %w", err)
 	}
 
-	// only take 20 entries
-	validators = validators[:20]
+	// Add readable date for each entry
+	for i := range validators {
+		validators[i].LastSeenDate = convertToReadableDate(int64(validators[i].LastSeen))
+	}
 
 	return validators, nil
+}
+
+// convertToReadableDate converts a UNIX timestamp in milliseconds to a human-readable date string
+func convertToReadableDate(unixTimestampMs int64) string {
+	// Convert milliseconds to seconds
+	unixTimestamp := unixTimestampMs / 1000
+
+	// Create a time.Time object
+	t := time.Unix(unixTimestamp, 0)
+
+	// Format the time.Time object to a readable date string
+	return t.Format("2006-01-02")
 }
 
 // clearTableData clears the data in the Dune table
 func clearTableData(namespace, tableName string) error {
 	url := fmt.Sprintf(clearEndpoint, namespace, tableName)
-	req, err := http.NewRequest("POST", url, nil)
+	req, err := http.NewRequest(http.MethodPost, url, nil)
 	if err != nil {
 		return fmt.Errorf("failed to create clear table request: %w", err)
 	}
@@ -162,8 +176,6 @@ func insertDataIntoTable(namespace, tableName string, data []ValidatorNonAdminTr
 	}
 	defer resp.Body.Close()
 
-	fmt.Println(resp.Body)
-
 	if resp.StatusCode != http.StatusOK {
 		bodyBytes, err := io.ReadAll(resp.Body)
 		if err != nil {
@@ -175,19 +187,18 @@ func insertDataIntoTable(namespace, tableName string, data []ValidatorNonAdminTr
 	return nil
 }
 
-func publishToDune() error {
+func (c *Consumer) publishToDune() error {
 	// Create the table in Dune
-	fmt.Println("Creating table in Dune")
 	err := createTable(namespace, tableName, []Column{
 		{Name: "peer_id", Type: "varchar", Nullable: false},
 		{Name: "port", Type: "integer", Nullable: true},
-		{Name: "last_seen", Type: "timestamp", Nullable: true},
+		{Name: "last_seen", Type: "bigint", Nullable: true},
+		{Name: "last_seen_date", Type: "date", Nullable: true},
 		{Name: "last_epoch", Type: "integer", Nullable: true},
 		{Name: "client_version", Type: "varchar", Nullable: true},
 		{Name: "possible_validator", Type: "boolean", Nullable: true},
 		{Name: "max_validator_count", Type: "integer", Nullable: true},
 		{Name: "num_observations", Type: "integer", Nullable: true},
-		// {Name: "hostname", Type: "varchar", Nullable: true},
 		{Name: "city", Type: "varchar", Nullable: true},
 		{Name: "region", Type: "varchar", Nullable: true},
 		{Name: "country", Type: "varchar", Nullable: true},
@@ -201,28 +212,28 @@ func publishToDune() error {
 	if err != nil {
 		return fmt.Errorf("failed to create table in Dune: %w", err)
 	}
+	c.log.Debug().Msg("Created table in Dune")
 
-	fmt.Println("Fetching data from API")
 	// Fetch data from the API
 	validators, err := fetchDataFromAPI(apiURL)
 	if err != nil {
 		return fmt.Errorf("failed to fetch data from API: %w", err)
 	}
+	c.log.Debug().Msg("Fetched data from API")
 
-	fmt.Println("Clearing data into Dune")
 	// Clear the data in the table
 	err = clearTableData(namespace, tableName)
 	if err != nil {
 		return fmt.Errorf("failed to clear table data: %w", err)
 	}
+	c.log.Debug().Msg("Cleared table data in Dune")
 
-	fmt.Println("Inserting data into Dune")
 	// Insert the data into the table
 	err = insertDataIntoTable(namespace, tableName, validators)
 	if err != nil {
 		return fmt.Errorf("failed to insert data into table: %w", err)
 	}
+	c.log.Debug().Msg("Inserted data into table in Dune")
 
-	fmt.Println("Data published to Dune")
 	return nil
 }
