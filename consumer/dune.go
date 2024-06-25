@@ -105,6 +105,8 @@ func (d *Dune) CreateTable(tableName string, schema []Column) error {
 		return fmt.Errorf("HTTP error response: %d / %s", resp.StatusCode, string(bodyBytes))
 	}
 
+	d.log.Info().Any("body", requestBody).Msg("Created table in Dune")
+
 	return nil
 }
 
@@ -177,6 +179,10 @@ func (d *Dune) Insert(tableName string, data []ValidatorNonAdminTracker) error {
 		buffer.Write(line)
 	}
 
+	start := time.Now()
+
+	d.log.Info().Str("endpoint", insertEndpoint).Int("rows", len(data)).Msg("Inserting data into Dune table")
+
 	req, err := http.NewRequest(http.MethodPost, url, &buffer)
 	if err != nil {
 		return fmt.Errorf("failed to create insert data request: %w", err)
@@ -197,6 +203,8 @@ func (d *Dune) Insert(tableName string, data []ValidatorNonAdminTracker) error {
 		}
 		return fmt.Errorf("HTTP error response: %d / %s", resp.StatusCode, string(bodyBytes))
 	}
+
+	d.log.Info().Str("elapsed", time.Since(start).String()).Msg("Inserted data into Dune table")
 
 	return nil
 }
