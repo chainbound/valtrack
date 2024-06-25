@@ -34,7 +34,7 @@ type ValidatorTracker struct {
 	ASNType                string  `json:"asn_type"`
 }
 
-// Query to fetch data from multiple tables
+// Query to fetch data
 var selectQuery = `
 SELECT vt.peer_id, vt.enr, vt.multiaddr, vt.ip, vt.port, vt.last_seen, vt.last_epoch,
 	   vt.client_version, vc.validator_count, 
@@ -100,7 +100,7 @@ func createGetValidatorsHandler(db *sql.DB) http.HandlerFunc {
 				log.Fatalf("Error scanning row: %v\n", err)
 			}
 
-			// If the user is not an admin, we should not return the sensitive data
+			// Dont return sensitive information if not admin
 			if !isAdmin {
 				vm.ENR = ""
 				vm.Multiaddr = ""
@@ -111,7 +111,7 @@ func createGetValidatorsHandler(db *sql.DB) http.HandlerFunc {
 			}
 			vm.ValidatorCountAccuracy = math.Round(vm.ValidatorCountAccuracy*100) / 100
 
-			// Check if this peer_id already exists in the map and update if necessary
+			// Check if peer_id already exists in map, update if the validator count is higher
 			existing, ok := peerIDMap[vm.PeerID]
 			if !ok || vm.ValidatorCount > existing.ValidatorCount {
 				peerIDMap[vm.PeerID] = vm
