@@ -7,11 +7,12 @@ import (
 	"io"
 	"net/http"
 	"time"
+
+	"github.com/chainbound/valtrack/log"
+	"github.com/rs/zerolog"
 )
 
 const (
-	duneAPIKey     = ""
-	namespace      = ""
 	tableName      = "validator_metadata"
 	apiURL         = "http://localhost:8080/validators"
 	createEndpoint = "https://api.dune.com/api/v1/table/create"
@@ -54,10 +55,24 @@ type ValidatorNonAdminTracker struct {
 	ASNType           string  `json:"asn_type"`
 }
 
-// createTable creates a new table in Dune
-func createTable(namespace, tableName string, schema []Column) error {
+type Dune struct {
+	log       zerolog.Logger
+	namespace string
+	apiKey    string
+}
+
+func NewDune(namespace, apiKey string) *Dune {
+	return &Dune{
+		log:       log.NewLogger("dune"),
+		namespace: namespace,
+		apiKey:    apiKey,
+	}
+}
+
+// CreateTable creates a table in Dune with the specified schema
+func (d *Dune) CreateTable(tableName string, schema []Column) error {
 	requestBody := CreateTableRequest{
-		Namespace:   namespace,
+		Namespace:   d.namespace,
 		TableName:   tableName,
 		Schema:      schema,
 		IsPrivate:   false,
@@ -73,7 +88,7 @@ func createTable(namespace, tableName string, schema []Column) error {
 	if err != nil {
 		return fmt.Errorf("failed to create table request: %w", err)
 	}
-	req.Header.Set("x-dune-api-key", duneAPIKey)
+	req.Header.Set("x-dune-api-key", d.apiKey)
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := http.DefaultClient.Do(req)
@@ -128,13 +143,13 @@ func convertToReadableDate(unixTimestampMs int64) string {
 }
 
 // clearTableData clears the data in the Dune table
-func clearTableData(namespace, tableName string) error {
-	url := fmt.Sprintf(clearEndpoint, namespace, tableName)
+func (d *Dune) ClearTableData(tableName string) error {
+	url := fmt.Sprintf(clearEndpoint, d.namespace, tableName)
 	req, err := http.NewRequest(http.MethodPost, url, nil)
 	if err != nil {
 		return fmt.Errorf("failed to create clear table request: %w", err)
 	}
-	req.Header.Set("x-dune-api-key", duneAPIKey)
+	req.Header.Set("x-dune-api-key", d.apiKey)
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -150,8 +165,8 @@ func clearTableData(namespace, tableName string) error {
 }
 
 // insertDataIntoTable inserts data into the Dune table
-func insertDataIntoTable(namespace, tableName string, data []ValidatorNonAdminTracker) error {
-	url := fmt.Sprintf(insertEndpoint, namespace, tableName)
+func (d *Dune) Insert(tableName string, data []ValidatorNonAdminTracker) error {
+	url := fmt.Sprintf(insertEndpoint, d.namespace, tableName)
 
 	var buffer bytes.Buffer
 	for _, validator := range data {
@@ -166,7 +181,7 @@ func insertDataIntoTable(namespace, tableName string, data []ValidatorNonAdminTr
 	if err != nil {
 		return fmt.Errorf("failed to create insert data request: %w", err)
 	}
-	req.Header.Set("x-dune-api-key", duneAPIKey)
+	req.Header.Set("x-dune-api-key", d.apiKey)
 	req.Header.Set("Content-Type", contentType)
 
 	resp, err := http.DefaultClient.Do(req)
@@ -188,7 +203,7 @@ func insertDataIntoTable(namespace, tableName string, data []ValidatorNonAdminTr
 
 func (c *Consumer) publishToDune() error {
 	// Create the table in Dune
-	err := createTable(namespace, tableName, []Column{
+	err := c.dune.CreateTable(tableName, []Column{
 		{Name: "peer_id", Type: "varchar", Nullable: false},
 		{Name: "port", Type: "integer", Nullable: true},
 		{Name: "last_seen", Type: "bigint", Nullable: true},
@@ -220,14 +235,14 @@ func (c *Consumer) publishToDune() error {
 	c.log.Debug().Msg("Fetched data from API")
 
 	// Clear the old data in the table
-	err = clearTableData(namespace, tableName)
+	err = c.dune.ClearTableData(tableName)
 	if err != nil {
 		return fmt.Errorf("failed to clear table data: %w", err)
 	}
 	c.log.Debug().Msg("Cleared table data in Dune")
 
 	// Insert the fresh data into the table
-	err = insertDataIntoTable(namespace, tableName, validators)
+	err = c.dune.Insert(tableName, validators)
 	if err != nil {
 		return fmt.Errorf("failed to insert data into table: %w", err)
 	}
