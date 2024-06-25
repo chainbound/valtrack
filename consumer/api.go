@@ -23,7 +23,7 @@ type ValidatorTracker struct {
 	PossibleValidator bool    `json:"possible_validator"`
 	MaxValidatorCount int     `json:"max_validator_count"`
 	NumObservations   int     `json:"num_observations"`
-	Hostname          string  `json:"hostname"`
+	Hostname          string  `json:"hostname,omitempty"`
 	City              string  `json:"city"`
 	Region            string  `json:"region"`
 	Country           string  `json:"country"`
@@ -83,6 +83,7 @@ func createGetValidatorsHandler(db *sql.DB) http.HandlerFunc {
 				vm.ENR = ""
 				vm.Multiaddr = ""
 				vm.IP = ""
+				vm.Hostname = ""
 				vm.Latitude = math.Round(vm.Latitude*10) / 10
 				vm.Longitude = math.Round(vm.Longitude*10) / 10
 			}
