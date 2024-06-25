@@ -12,7 +12,7 @@ import (
 const (
 	duneAPIKey     = ""
 	namespace      = ""
-	tableName      = "validator_locations"
+	tableName      = "validator_metadata"
 	apiURL         = "http://localhost:8080/validators"
 	createEndpoint = "https://api.dune.com/api/v1/table/create"
 	clearEndpoint  = "https://api.dune.com/api/v1/table/%s/%s/clear"
@@ -41,7 +41,6 @@ type ValidatorNonAdminTracker struct {
 	LastSeenDate      string  `json:"last_seen_date"`
 	LastEpoch         int     `json:"last_epoch"`
 	ClientVersion     string  `json:"client_version"`
-	PossibleValidator bool    `json:"possible_validator"`
 	MaxValidatorCount int     `json:"max_validator_count"`
 	NumObservations   int     `json:"num_observations"`
 	City              string  `json:"city"`
@@ -196,7 +195,6 @@ func (c *Consumer) publishToDune() error {
 		{Name: "last_seen_date", Type: "date", Nullable: true},
 		{Name: "last_epoch", Type: "integer", Nullable: true},
 		{Name: "client_version", Type: "varchar", Nullable: true},
-		{Name: "possible_validator", Type: "boolean", Nullable: true},
 		{Name: "max_validator_count", Type: "integer", Nullable: true},
 		{Name: "num_observations", Type: "integer", Nullable: true},
 		{Name: "city", Type: "varchar", Nullable: true},

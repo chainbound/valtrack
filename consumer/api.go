@@ -20,7 +20,6 @@ type ValidatorTracker struct {
 	LastSeen          int     `json:"last_seen"`
 	LastEpoch         int     `json:"last_epoch"`
 	ClientVersion     string  `json:"client_version"`
-	PossibleValidator bool    `json:"possible_validator"`
 	MaxValidatorCount int     `json:"max_validator_count"`
 	NumObservations   int     `json:"num_observations"`
 	Hostname          string  `json:"hostname,omitempty"`
@@ -35,7 +34,7 @@ type ValidatorTracker struct {
 	ASNType           string  `json:"asn_type"`
 }
 
-var selectQuery = `SELECT peer_id, enr, multiaddr, validator_tracker.ip, port, last_seen, last_epoch, client_version, possible_validator, max_validator_count, num_observations, hostname, city, region, country, latitude, longitude, postal_code, asn, asn_organization, asn_type FROM validator_tracker JOIN ip_metadata ON validator_tracker.ip = ip_metadata.ip`
+var selectQuery = `SELECT peer_id, enr, multiaddr, validator_tracker.ip, port, last_seen, last_epoch, client_version, max_validator_count, num_observations, hostname, city, region, country, latitude, longitude, postal_code, asn, asn_organization, asn_type FROM validator_tracker JOIN ip_metadata ON validator_tracker.ip = ip_metadata.ip`
 
 // LoadAPIKeys reads the API keys from a file and returns a map of keys
 func loadAPIKeys(filePath string, apiKey string) (bool, error) {
@@ -72,7 +71,7 @@ func createGetValidatorsHandler(db *sql.DB) http.HandlerFunc {
 		var validators []ValidatorTracker
 		for rows.Next() {
 			var vm ValidatorTracker
-			err := rows.Scan(&vm.PeerID, &vm.ENR, &vm.Multiaddr, &vm.IP, &vm.Port, &vm.LastSeen, &vm.LastEpoch, &vm.ClientVersion, &vm.PossibleValidator, &vm.MaxValidatorCount, &vm.NumObservations, &vm.Hostname, &vm.City, &vm.Region, &vm.Country, &vm.Latitude, &vm.Longitude, &vm.PostalCode, &vm.ASN, &vm.ASNOrganization, &vm.ASNType)
+			err := rows.Scan(&vm.PeerID, &vm.ENR, &vm.Multiaddr, &vm.IP, &vm.Port, &vm.LastSeen, &vm.LastEpoch, &vm.ClientVersion, &vm.MaxValidatorCount, &vm.NumObservations, &vm.Hostname, &vm.City, &vm.Region, &vm.Country, &vm.Latitude, &vm.Longitude, &vm.PostalCode, &vm.ASN, &vm.ASNOrganization, &vm.ASNType)
 			if err != nil {
 				http.Error(w, fmt.Sprintf("Error scanning row: %s", err), http.StatusInternalServerError)
 				return

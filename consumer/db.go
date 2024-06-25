@@ -26,7 +26,6 @@ var (
         last_seen INTEGER,
         last_epoch INTEGER,
 		client_version TEXT,
-        possible_validator BOOLEAN,
         max_validator_count INTEGER,
         num_observations INTEGER
     );
@@ -49,11 +48,11 @@ var (
 	`
 
 	insertQuery = `
-				INSERT INTO validator_tracker (peer_id, enr, multiaddr, ip, port, last_seen, last_epoch, client_version, possible_validator, max_validator_count, num_observations)
+				INSERT INTO validator_tracker (peer_id, enr, multiaddr, ip, port, last_seen, last_epoch, client_version, max_validator_count, num_observations)
 				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 	updateQuery = `
 				UPDATE validator_tracker
-				SET enr = ?, multiaddr = ?, ip = ?, port = ?, last_seen = ?, last_epoch = ?, client_version = ?, possible_validator = ?, max_validator_count = ?, num_observations = ?
+				SET enr = ?, multiaddr = ?, ip = ?, port = ?, last_seen = ?, last_epoch = ?, client_version = ?, max_validator_count = ?, num_observations = ?
 				WHERE peer_id = ?
 				`
 	selectIpMetadataQuery = `SELECT * FROM ip_metadata WHERE ip = ?`
@@ -208,20 +207,12 @@ func (c *Consumer) runValidatorMetadataEventHandler(token string) error {
 			continue
 		}
 
-		isValidator := true
 		longLived := indexesFromBitfield(event.MetaData.Attnets)
 		shortLived := extractShortLivedSubnets(event.SubscribedSubnets, longLived)
 
 		prevNumObservations := uint64(0)
 		prevValidatorCount := int32(0)
 		err = c.db.QueryRow("SELECT max_validator_count, num_observations FROM validator_tracker WHERE peer_id = ?", event.ID).Scan(&prevValidatorCount, &prevNumObservations)
-
-		// If current short lived subnets are empty and
-		// also never had short-lived subnets before
-		// then the peer is not a validator
-		if len(shortLived) == 0 && prevValidatorCount == 0 {
-			isValidator = false
-		}
 
 		// Assumption: Validator selected for attestation aggregation
 		// is subscribed to a single subnet for a 1 epoch duration
@@ -236,7 +227,7 @@ func (c *Consumer) runValidatorMetadataEventHandler(token string) error {
 
 		if err == sql.ErrNoRows {
 			// Insert new row
-			_, err = tx.Exec(insertQuery, event.ID, event.ENR, event.Multiaddr, ip, port, event.Timestamp, event.Epoch, event.ClientVersion, isValidator, currValidatorCount, prevNumObservations+1)
+			_, err = tx.Exec(insertQuery, event.ID, event.ENR, event.Multiaddr, ip, port, event.Timestamp, event.Epoch, event.ClientVersion, currValidatorCount, prevNumObservations+1)
 			if err != nil {
 				c.log.Error().Err(err).Msg("Error inserting row")
 			}
@@ -288,7 +279,7 @@ func (c *Consumer) runValidatorMetadataEventHandler(token string) error {
 			c.log.Error().Err(err).Msg("Error querying database")
 		} else {
 			// Update existing row
-			_, err = tx.Exec(updateQuery, event.ENR, event.Multiaddr, ip, port, event.Timestamp, event.Epoch, event.ClientVersion, isValidator, currValidatorCount, prevNumObservations+1, event.ID)
+			_, err = tx.Exec(updateQuery, event.ENR, event.Multiaddr, ip, port, event.Timestamp, event.Epoch, event.ClientVersion, currValidatorCount, prevNumObservations+1, event.ID)
 			if err != nil {
 				c.log.Error().Err(err).Msg("Error updating row")
 			}
