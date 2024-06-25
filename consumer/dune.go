@@ -207,7 +207,7 @@ func (c *Consumer) publishToDune() error {
 		{Name: "peer_id", Type: "varchar", Nullable: false},
 		{Name: "port", Type: "integer", Nullable: true},
 		{Name: "last_seen", Type: "bigint", Nullable: true},
-		{Name: "last_seen_date", Type: "date", Nullable: true},
+		{Name: "last_seen_date", Type: "timestamp", Nullable: true},
 		{Name: "last_epoch", Type: "integer", Nullable: true},
 		{Name: "client_version", Type: "varchar", Nullable: true},
 		{Name: "max_validator_count", Type: "integer", Nullable: true},
