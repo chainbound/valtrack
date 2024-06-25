@@ -190,6 +190,20 @@ func RunConsumer(cfg *ConsumerConfig) {
 		server.Shutdown(context.Background())
 	}()
 
+	// Start publishing to Dune periodically
+	go func() {
+		log.Info().Msg("Starting Dune")
+		publishToDune()
+
+		ticker := time.NewTicker(24 * time.Hour)
+		defer ticker.Stop()
+
+		for range ticker.C {
+			publishToDune()
+			log.Info().Msg("Published to Dune")
+		}
+	}()
+
 	// Gracefully shutdown
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, os.Interrupt, syscall.SIGTERM, syscall.SIGINT)
