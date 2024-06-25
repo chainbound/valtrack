@@ -4,7 +4,7 @@ import (
 	"bufio"
 	"database/sql"
 	"encoding/json"
-	"fmt"
+	"log"
 	"math"
 	"net/http"
 	"os"
@@ -12,28 +12,44 @@ import (
 )
 
 type ValidatorTracker struct {
-	PeerID            string  `json:"peer_id"`
-	ENR               string  `json:"enr,omitempty"`
-	Multiaddr         string  `json:"multiaddr,omitempty"`
-	IP                string  `json:"ip,omitempty"`
-	Port              int     `json:"port"`
-	LastSeen          int     `json:"last_seen"`
-	LastEpoch         int     `json:"last_epoch"`
-	ClientVersion     string  `json:"client_version"`
-	MaxValidatorCount int     `json:"max_validator_count"`
-	Hostname          string  `json:"hostname,omitempty"`
-	City              string  `json:"city"`
-	Region            string  `json:"region"`
-	Country           string  `json:"country"`
-	Latitude          float64 `json:"latitude"`
-	Longitude         float64 `json:"longitude"`
-	PostalCode        string  `json:"postal_code"`
-	ASN               string  `json:"asn"`
-	ASNOrganization   string  `json:"asn_organization"`
-	ASNType           string  `json:"asn_type"`
+	PeerID                 string  `json:"peer_id"`
+	ENR                    string  `json:"enr,omitempty"`
+	Multiaddr              string  `json:"multiaddr,omitempty"`
+	IP                     string  `json:"ip,omitempty"`
+	Port                   int     `json:"port"`
+	LastSeen               int     `json:"last_seen"`
+	LastEpoch              int     `json:"last_epoch"`
+	ClientVersion          string  `json:"client_version"`
+	ValidatorCount         int     `json:"validator_count"`
+	ValidatorCountAccuracy float64 `json:"validator_count_accuracy"`
+	Hostname               string  `json:"hostname,omitempty"`
+	City                   string  `json:"city"`
+	Region                 string  `json:"region"`
+	Country                string  `json:"country"`
+	Latitude               float64 `json:"latitude"`
+	Longitude              float64 `json:"longitude"`
+	PostalCode             string  `json:"postal_code"`
+	ASN                    string  `json:"asn"`
+	ASNOrganization        string  `json:"asn_organization"`
+	ASNType                string  `json:"asn_type"`
 }
 
-var selectQuery = `SELECT peer_id, enr, multiaddr, validator_tracker.ip, port, last_seen, last_epoch, client_version, max_validator_count, hostname, city, region, country, latitude, longitude, postal_code, asn, asn_organization, asn_type FROM validator_tracker JOIN ip_metadata ON validator_tracker.ip = ip_metadata.ip`
+// Query to fetch data from multiple tables
+var selectQuery = `
+SELECT vt.peer_id, vt.enr, vt.multiaddr, vt.ip, vt.port, vt.last_seen, vt.last_epoch,
+	   vt.client_version, vc.validator_count, 
+	   CAST(vc.n_observations AS FLOAT) / vt.num_observations AS validator_count_accuracy,
+	   im.hostname, im.city, im.region, im.country, im.latitude, im.longitude,
+	   im.postal_code, im.asn, im.asn_organization, im.asn_type
+FROM validator_tracker vt
+LEFT JOIN validator_counts vc ON vt.peer_id = vc.peer_id
+LEFT JOIN ip_metadata im ON vt.ip = im.ip
+WHERE (vc.peer_id, vc.n_observations) IN (
+	SELECT peer_id, MAX(n_observations)
+	FROM validator_counts
+	GROUP BY peer_id
+	)
+`
 
 // LoadAPIKeys reads the API keys from a file and returns a map of keys
 func loadAPIKeys(filePath string, apiKey string) (bool, error) {
@@ -70,10 +86,15 @@ func createGetValidatorsHandler(db *sql.DB) http.HandlerFunc {
 		var validators []ValidatorTracker
 		for rows.Next() {
 			var vm ValidatorTracker
-			err := rows.Scan(&vm.PeerID, &vm.ENR, &vm.Multiaddr, &vm.IP, &vm.Port, &vm.LastSeen, &vm.LastEpoch, &vm.ClientVersion, &vm.MaxValidatorCount, &vm.Hostname, &vm.City, &vm.Region, &vm.Country, &vm.Latitude, &vm.Longitude, &vm.PostalCode, &vm.ASN, &vm.ASNOrganization, &vm.ASNType)
+			err := rows.Scan(
+				&vm.PeerID, &vm.ENR, &vm.Multiaddr, &vm.IP, &vm.Port,
+				&vm.LastSeen, &vm.LastEpoch, &vm.ClientVersion, &vm.ValidatorCount,
+				&vm.ValidatorCountAccuracy, &vm.Hostname, &vm.City, &vm.Region,
+				&vm.Country, &vm.Latitude, &vm.Longitude, &vm.PostalCode,
+				&vm.ASN, &vm.ASNOrganization, &vm.ASNType,
+			)
 			if err != nil {
-				http.Error(w, fmt.Sprintf("Error scanning row: %s", err), http.StatusInternalServerError)
-				return
+				log.Fatalf("Error scanning row: %v\n", err)
 			}
 
 			// If the user is not an admin, we should not return the sensitive data

@@ -113,7 +113,7 @@ func loadIPMetadataFromCSV(db *sql.DB, path string) error {
 	var rowCountStr string
 	err = db.QueryRow("SELECT COUNT(ip) FROM ip_metadata").Scan(&rowCountStr)
 	if err != nil {
-		errors.Wrap(err, "Error querying database")
+		errors.Wrap(err, "Error querying ip_metadata database")
 	}
 
 	rowCount, _ := strconv.Atoi(rowCountStr)
@@ -288,7 +288,7 @@ func (c *Consumer) runValidatorMetadataEventHandler(token string) error {
 			}
 			c.log.Trace().Str("peer_id", event.ID).Msg("Inserted new row")
 		} else if err != nil {
-			c.log.Error().Err(err).Msg("Error querying database")
+			c.log.Error().Err(err).Msg("Error querying validator_tracker database")
 		} else {
 			// Update existing row
 			_, err = tx.Exec(updateTrackerQuery, event.ENR, event.Multiaddr, ip, port, event.Timestamp, event.Epoch, event.ClientVersion, prevNumObservations+1, event.ID)
