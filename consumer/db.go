@@ -49,7 +49,7 @@ var (
 
 	insertQuery = `
 				INSERT INTO validator_tracker (peer_id, enr, multiaddr, ip, port, last_seen, last_epoch, client_version, max_validator_count, num_observations)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 	updateQuery = `
 				UPDATE validator_tracker
 				SET enr = ?, multiaddr = ?, ip = ?, port = ?, last_seen = ?, last_epoch = ?, client_version = ?, max_validator_count = ?, num_observations = ?
