@@ -229,8 +229,8 @@ func (c *Consumer) runValidatorMetadataEventHandler(token string) error {
 		// is subscribed to a single subnet for a 1 epoch duration
 		currValidatorCount := len(shortLived)
 
-		var prevNumObservations int
-		err = c.db.QueryRow("SELECT total_observations FROM validator_tracker WHERE peer_id = ?", event.ID).Scan(&prevNumObservations)
+		var prevTotalObservations int
+		err = c.db.QueryRow("SELECT total_observations FROM validator_tracker WHERE peer_id = ?", event.ID).Scan(&prevTotalObservations)
 
 		if err == sql.ErrNoRows {
 			// Insert new row
@@ -291,7 +291,7 @@ func (c *Consumer) runValidatorMetadataEventHandler(token string) error {
 			c.log.Error().Err(err).Msg("Error querying validator_tracker database")
 		} else {
 			// Update existing row
-			_, err = tx.Exec(updateTrackerQuery, event.ENR, event.Multiaddr, ip, port, event.Timestamp, event.Epoch, event.ClientVersion, prevNumObservations+1, event.ID)
+			_, err = tx.Exec(updateTrackerQuery, event.ENR, event.Multiaddr, ip, port, event.Timestamp, event.Epoch, event.ClientVersion, prevTotalObservations+1, event.ID)
 			if err != nil {
 				c.log.Error().Err(err).Msg("Error updating row")
 			}
