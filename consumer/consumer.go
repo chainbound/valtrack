@@ -26,10 +26,12 @@ import (
 const BATCH_SIZE = 1024
 
 type ConsumerConfig struct {
-	LogLevel string
-	NatsURL  string
-	Name     string
-	ChCfg    ch.ClickhouseConfig
+	LogLevel      string
+	NatsURL       string
+	Name          string
+	ChCfg         ch.ClickhouseConfig
+	DuneNamespace string
+	DuneApiKey    string
 }
 
 type Consumer struct {
@@ -43,6 +45,7 @@ type Consumer struct {
 
 	chClient *ch.ClickhouseClient
 	db       *sql.DB
+	dune     *Dune
 }
 
 func RunConsumer(cfg *ConsumerConfig) {
@@ -150,6 +153,12 @@ func RunConsumer(cfg *ConsumerConfig) {
 		}
 	}
 
+	var dune *Dune
+	// If non-empty key, initialize Dune
+	if cfg.DuneApiKey != "" {
+		dune = NewDune(cfg.DuneNamespace, cfg.DuneApiKey)
+	}
+
 	consumer := Consumer{
 		log:             log,
 		discoveryWriter: discoveryWriter,
@@ -161,6 +170,7 @@ func RunConsumer(cfg *ConsumerConfig) {
 
 		chClient: chClient,
 		db:       db,
+		dune:     dune,
 	}
 
 	// Start the consumer
@@ -189,6 +199,26 @@ func RunConsumer(cfg *ConsumerConfig) {
 	defer func() {
 		server.Shutdown(context.Background())
 	}()
+
+	// Start publishing to Dune periodically
+	if dune != nil {
+		log.Info().Msg("Starting to publish to Dune")
+		go func() {
+			if err := consumer.publishToDune(); err != nil {
+				log.Error().Err(err).Msg("Error publishing to Dune")
+			}
+
+			ticker := time.NewTicker(24 * time.Hour) // Adjust the publishing time interval
+			defer ticker.Stop()
+
+			for range ticker.C {
+				if err := consumer.publishToDune(); err != nil {
+					log.Error().Err(err).Msg("Error publishing to Dune")
+				}
+				log.Info().Msg("Published to Dune")
+			}
+		}()
+	}
 
 	// Gracefully shutdown
 	quit := make(chan os.Signal, 1)

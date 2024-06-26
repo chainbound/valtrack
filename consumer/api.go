@@ -4,37 +4,53 @@ import (
 	"bufio"
 	"database/sql"
 	"encoding/json"
-	"fmt"
+	"log"
+	"math"
 	"net/http"
 	"os"
 	"strings"
 )
 
 type ValidatorTracker struct {
-	PeerID            string  `json:"peer_id"`
-	ENR               string  `json:"enr"`
-	Multiaddr         string  `json:"multiaddr"`
-	IP                string  `json:"ip"`
-	Port              int     `json:"port"`
-	LastSeen          int     `json:"last_seen"`
-	LastEpoch         int     `json:"last_epoch"`
-	ClientVersion     string  `json:"client_version"`
-	PossibleValidator bool    `json:"possible_validator"`
-	MaxValidatorCount int     `json:"max_validator_count"`
-	NumObservations   int     `json:"num_observations"`
-	Hostname          string  `json:"hostname"`
-	City              string  `json:"city"`
-	Region            string  `json:"region"`
-	Country           string  `json:"country"`
-	Latitude          float64 `json:"latitude"`
-	Longitude         float64 `json:"longitude"`
-	PostalCode        string  `json:"postal_code"`
-	ASN               string  `json:"asn"`
-	ASNOrganization   string  `json:"asn_organization"`
-	ASNType           string  `json:"asn_type"`
+	PeerID                 string  `json:"peer_id"`
+	ENR                    string  `json:"enr,omitempty"`
+	Multiaddr              string  `json:"multiaddr,omitempty"`
+	IP                     string  `json:"ip,omitempty"`
+	Port                   int     `json:"port"`
+	LastSeen               int     `json:"last_seen"`
+	LastEpoch              int     `json:"last_epoch"`
+	ClientVersion          string  `json:"client_version"`
+	ValidatorCount         int     `json:"validator_count"`
+	ValidatorCountAccuracy float64 `json:"validator_count_accuracy"`
+	TotalObservations      int     `json:"total_observations"`
+	Hostname               string  `json:"hostname,omitempty"`
+	City                   string  `json:"city"`
+	Region                 string  `json:"region"`
+	Country                string  `json:"country"`
+	Latitude               float64 `json:"latitude"`
+	Longitude              float64 `json:"longitude"`
+	PostalCode             string  `json:"postal_code"`
+	ASN                    string  `json:"asn"`
+	ASNOrganization        string  `json:"asn_organization"`
+	ASNType                string  `json:"asn_type"`
 }
 
-var selectQuery = `SELECT peer_id, enr, multiaddr, validator_tracker.ip, port, last_seen, last_epoch, client_version, possible_validator, max_validator_count, num_observations, hostname, city, region, country, latitude, longitude, postal_code, asn, asn_organization, asn_type FROM validator_tracker JOIN ip_metadata ON validator_tracker.ip = ip_metadata.ip`
+// Query to fetch data
+var selectQuery = `
+SELECT vt.peer_id, vt.enr, vt.multiaddr, vt.ip, vt.port, vt.last_seen, vt.last_epoch,
+	   vt.client_version, vc.validator_count, 
+	   CAST(vc.n_observations AS FLOAT) / vt.total_observations AS validator_count_accuracy, vt.total_observations,
+	   im.hostname, im.city, im.region, im.country, im.latitude, im.longitude,
+	   im.postal_code, im.asn, im.asn_organization, im.asn_type
+FROM validator_tracker vt
+LEFT JOIN validator_counts vc ON vt.peer_id = vc.peer_id
+LEFT JOIN ip_metadata im ON vt.ip = im.ip
+WHERE (vc.peer_id, vc.n_observations) IN (
+	SELECT peer_id, MAX(n_observations)
+	FROM validator_counts
+	GROUP BY peer_id
+	) AND city is not null
+`
 
 // LoadAPIKeys reads the API keys from a file and returns a map of keys
 func loadAPIKeys(filePath string, apiKey string) (bool, error) {
@@ -61,6 +77,9 @@ func createGetValidatorsHandler(db *sql.DB) http.HandlerFunc {
 
 		isAdmin, _ := loadAPIKeys("api_keys.txt", apiKey)
 
+		// Map to store unique entries per peer_id
+		peerIDMap := make(map[string]ValidatorTracker)
+
 		rows, err := db.Query(selectQuery)
 		if err != nil {
 			http.Error(w, "Error querying database", http.StatusInternalServerError)
@@ -71,20 +90,37 @@ func createGetValidatorsHandler(db *sql.DB) http.HandlerFunc {
 		var validators []ValidatorTracker
 		for rows.Next() {
 			var vm ValidatorTracker
-			err := rows.Scan(&vm.PeerID, &vm.ENR, &vm.Multiaddr, &vm.IP, &vm.Port, &vm.LastSeen, &vm.LastEpoch, &vm.ClientVersion, &vm.PossibleValidator, &vm.MaxValidatorCount, &vm.NumObservations, &vm.Hostname, &vm.City, &vm.Region, &vm.Country, &vm.Latitude, &vm.Longitude, &vm.PostalCode, &vm.ASN, &vm.ASNOrganization, &vm.ASNType)
+			err := rows.Scan(
+				&vm.PeerID, &vm.ENR, &vm.Multiaddr, &vm.IP, &vm.Port,
+				&vm.LastSeen, &vm.LastEpoch, &vm.ClientVersion, &vm.ValidatorCount,
+				&vm.ValidatorCountAccuracy, &vm.TotalObservations, &vm.Hostname, &vm.City, &vm.Region,
+				&vm.Country, &vm.Latitude, &vm.Longitude, &vm.PostalCode,
+				&vm.ASN, &vm.ASNOrganization, &vm.ASNType,
+			)
 			if err != nil {
-				http.Error(w, fmt.Sprintf("Error scanning row: %s", err), http.StatusInternalServerError)
-				return
+				log.Fatalf("Error scanning row: %v\n", err)
 			}
 
-			// If the user is not an admin, we should not return the sensitive data
+			// Dont return sensitive information if not admin
 			if !isAdmin {
 				vm.ENR = ""
 				vm.Multiaddr = ""
 				vm.IP = ""
-				vm.Latitude = 0
-				vm.Longitude = 0
+				vm.Hostname = ""
+				vm.Latitude = math.Round(vm.Latitude*10) / 10
+				vm.Longitude = math.Round(vm.Longitude*10) / 10
 			}
+			vm.ValidatorCountAccuracy = math.Round(vm.ValidatorCountAccuracy*100) / 100
+
+			// Check if peer_id already exists in map, update if the validator count is higher
+			existing, ok := peerIDMap[vm.PeerID]
+			if !ok || vm.ValidatorCount > existing.ValidatorCount {
+				peerIDMap[vm.PeerID] = vm
+			}
+
+		}
+
+		for _, vm := range peerIDMap {
 			validators = append(validators, vm)
 		}
 

@@ -26,9 +26,7 @@ var (
         last_seen INTEGER,
         last_epoch INTEGER,
 		client_version TEXT,
-        possible_validator BOOLEAN,
-        max_validator_count INTEGER,
-        num_observations INTEGER
+		total_observations INTEGER
     );
     `
 
@@ -48,17 +46,28 @@ var (
 		);
 	`
 
-	insertQuery = `
-				INSERT INTO validator_tracker (peer_id, enr, multiaddr, ip, port, last_seen, last_epoch, client_version, possible_validator, max_validator_count, num_observations)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-	updateQuery = `
-				UPDATE validator_tracker
-				SET enr = ?, multiaddr = ?, ip = ?, port = ?, last_seen = ?, last_epoch = ?, client_version = ?, possible_validator = ?, max_validator_count = ?, num_observations = ?
-				WHERE peer_id = ?
-				`
+	createValidatorCountsTableQuery = `
+		CREATE TABLE IF NOT EXISTS validator_counts (
+			peer_id TEXT,
+			validator_count INTEGER,
+			n_observations INTEGER DEFAULT 1,
+			PRIMARY KEY (peer_id, validator_count)
+	);`
+
+	insertTrackerQuery = `
+		INSERT INTO validator_tracker (peer_id, enr, multiaddr, ip, port, last_seen, last_epoch, client_version, total_observations)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (peer_id) DO UPDATE SET total_observations = total_observations + 1;`
+
+	updateTrackerQuery = `
+		UPDATE validator_tracker
+		SET enr = ?, multiaddr = ?, ip = ?, port = ?, last_seen = ?, last_epoch = ?, client_version = ?, total_observations = total_observations + 1
+		WHERE peer_id = ?;`
+
 	selectIpMetadataQuery = `SELECT * FROM ip_metadata WHERE ip = ?`
 
 	insertIpMetadataQuery = `INSERT INTO ip_metadata (ip, hostname, city, region, country, latitude, longitude, postal_code, asn, asn_organization, asn_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+
+	insertValidatorCountsQuery = `INSERT INTO validator_counts (peer_id, validator_count, n_observations) VALUES (?, ?, 1) ON CONFLICT (peer_id, validator_count) DO UPDATE SET n_observations = validator_counts.n_observations + 1;`
 )
 
 func setupDatabase(db *sql.DB) error {
@@ -68,6 +77,11 @@ func setupDatabase(db *sql.DB) error {
 	}
 
 	_, err = db.Exec(createIpMetadataTableQuery)
+	if err != nil {
+		return err
+	}
+
+	_, err = db.Exec(createValidatorCountsTableQuery)
 	if err != nil {
 		return err
 	}
@@ -99,7 +113,7 @@ func loadIPMetadataFromCSV(db *sql.DB, path string) error {
 	var rowCountStr string
 	err = db.QueryRow("SELECT COUNT(ip) FROM ip_metadata").Scan(&rowCountStr)
 	if err != nil {
-		errors.Wrap(err, "Error querying database")
+		errors.Wrap(err, "Error querying ip_metadata database")
 	}
 
 	rowCount, _ := strconv.Atoi(rowCountStr)
@@ -208,37 +222,26 @@ func (c *Consumer) runValidatorMetadataEventHandler(token string) error {
 			continue
 		}
 
-		isValidator := true
 		longLived := indexesFromBitfield(event.MetaData.Attnets)
 		shortLived := extractShortLivedSubnets(event.SubscribedSubnets, longLived)
-
-		prevNumObservations := uint64(0)
-		prevValidatorCount := int32(0)
-		err = c.db.QueryRow("SELECT max_validator_count, num_observations FROM validator_tracker WHERE peer_id = ?", event.ID).Scan(&prevValidatorCount, &prevNumObservations)
-
-		// If current short lived subnets are empty and
-		// also never had short-lived subnets before
-		// then the peer is not a validator
-		if len(shortLived) == 0 && prevValidatorCount == 0 {
-			isValidator = false
-		}
 
 		// Assumption: Validator selected for attestation aggregation
 		// is subscribed to a single subnet for a 1 epoch duration
 		currValidatorCount := len(shortLived)
 
-		// If the previous validator count is greater then we set
-		// that as the value because it's possible the validator isn't
-		// selected for attestation aggregation in the current epoch
-		if int(prevValidatorCount) > currValidatorCount {
-			currValidatorCount = int(prevValidatorCount)
-		}
+		var prevTotalObservations int
+		err = c.db.QueryRow("SELECT total_observations FROM validator_tracker WHERE peer_id = ?", event.ID).Scan(&prevTotalObservations)
 
 		if err == sql.ErrNoRows {
 			// Insert new row
-			_, err = tx.Exec(insertQuery, event.ID, event.ENR, event.Multiaddr, ip, port, event.Timestamp, event.Epoch, event.ClientVersion, isValidator, currValidatorCount, prevNumObservations+1)
+			_, err = tx.Exec(insertTrackerQuery, event.ID, event.ENR, event.Multiaddr, ip, port, event.Timestamp, event.Epoch, event.ClientVersion, 1)
 			if err != nil {
 				c.log.Error().Err(err).Msg("Error inserting row")
+			}
+
+			_, err = tx.Exec(insertValidatorCountsQuery, event.ID, currValidatorCount)
+			if err != nil {
+				c.log.Error().Err(err).Msg("Error inserting validator count")
 			}
 
 			batchSize++
@@ -285,12 +288,17 @@ func (c *Consumer) runValidatorMetadataEventHandler(token string) error {
 			}
 			c.log.Trace().Str("peer_id", event.ID).Msg("Inserted new row")
 		} else if err != nil {
-			c.log.Error().Err(err).Msg("Error querying database")
+			c.log.Error().Err(err).Msg("Error querying validator_tracker database")
 		} else {
 			// Update existing row
-			_, err = tx.Exec(updateQuery, event.ENR, event.Multiaddr, ip, port, event.Timestamp, event.Epoch, event.ClientVersion, isValidator, currValidatorCount, prevNumObservations+1, event.ID)
+			_, err = tx.Exec(updateTrackerQuery, event.ENR, event.Multiaddr, ip, port, event.Timestamp, event.Epoch, event.ClientVersion, event.ID)
 			if err != nil {
 				c.log.Error().Err(err).Msg("Error updating row")
+			}
+
+			_, err = tx.Exec(insertValidatorCountsQuery, event.ID, currValidatorCount)
+			if err != nil {
+				c.log.Error().Err(err).Msg("Error inserting validator count")
 			}
 
 			batchSize++
