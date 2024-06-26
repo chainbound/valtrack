@@ -60,7 +60,7 @@ var (
 
 	updateTrackerQuery = `
 		UPDATE validator_tracker
-		SET enr = ?, multiaddr = ?, ip = ?, port = ?, last_seen = ?, last_epoch = ?, client_version = ?, total_observations = ?
+		SET enr = ?, multiaddr = ?, ip = ?, port = ?, last_seen = ?, last_epoch = ?, client_version = ?, total_observations = total_observations + 1
 		WHERE peer_id = ?;`
 
 	selectIpMetadataQuery = `SELECT * FROM ip_metadata WHERE ip = ?`
@@ -291,7 +291,7 @@ func (c *Consumer) runValidatorMetadataEventHandler(token string) error {
 			c.log.Error().Err(err).Msg("Error querying validator_tracker database")
 		} else {
 			// Update existing row
-			_, err = tx.Exec(updateTrackerQuery, event.ENR, event.Multiaddr, ip, port, event.Timestamp, event.Epoch, event.ClientVersion, prevTotalObservations+1, event.ID)
+			_, err = tx.Exec(updateTrackerQuery, event.ENR, event.Multiaddr, ip, port, event.Timestamp, event.Epoch, event.ClientVersion, event.ID)
 			if err != nil {
 				c.log.Error().Err(err).Msg("Error updating row")
 			}
