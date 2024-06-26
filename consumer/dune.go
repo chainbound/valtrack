@@ -44,6 +44,7 @@ type ValidatorNonAdminTracker struct {
 	ClientVersion          string  `json:"client_version"`
 	ValidatorCount         int     `json:"validator_count"`
 	ValidatorCountAccuracy float64 `json:"validator_count_accuracy"`
+	TotalObservations      int     `json:"total_observations"`
 	City                   string  `json:"city"`
 	Region                 string  `json:"region"`
 	Country                string  `json:"country"`
@@ -220,6 +221,7 @@ func (c *Consumer) publishToDune() error {
 		{Name: "client_version", Type: "varchar", Nullable: true},
 		{Name: "validator_count", Type: "integer", Nullable: true},
 		{Name: "validator_count_accuracy", Type: "double", Nullable: true},
+		{Name: "total_observations", Type: "integer", Nullable: true},
 		{Name: "city", Type: "varchar", Nullable: true},
 		{Name: "region", Type: "varchar", Nullable: true},
 		{Name: "country", Type: "varchar", Nullable: true},

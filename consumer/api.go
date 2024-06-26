@@ -22,6 +22,7 @@ type ValidatorTracker struct {
 	ClientVersion          string  `json:"client_version"`
 	ValidatorCount         int     `json:"validator_count"`
 	ValidatorCountAccuracy float64 `json:"validator_count_accuracy"`
+	TotalObservations      int     `json:"total_observations"`
 	Hostname               string  `json:"hostname,omitempty"`
 	City                   string  `json:"city"`
 	Region                 string  `json:"region"`
@@ -38,7 +39,7 @@ type ValidatorTracker struct {
 var selectQuery = `
 SELECT vt.peer_id, vt.enr, vt.multiaddr, vt.ip, vt.port, vt.last_seen, vt.last_epoch,
 	   vt.client_version, vc.validator_count, 
-	   CAST(vc.n_observations AS FLOAT) / vt.total_observations AS validator_count_accuracy,
+	   CAST(vc.n_observations AS FLOAT) / vt.total_observations AS validator_count_accuracy, vt.total_observations,
 	   im.hostname, im.city, im.region, im.country, im.latitude, im.longitude,
 	   im.postal_code, im.asn, im.asn_organization, im.asn_type
 FROM validator_tracker vt
@@ -92,7 +93,7 @@ func createGetValidatorsHandler(db *sql.DB) http.HandlerFunc {
 			err := rows.Scan(
 				&vm.PeerID, &vm.ENR, &vm.Multiaddr, &vm.IP, &vm.Port,
 				&vm.LastSeen, &vm.LastEpoch, &vm.ClientVersion, &vm.ValidatorCount,
-				&vm.ValidatorCountAccuracy, &vm.Hostname, &vm.City, &vm.Region,
+				&vm.ValidatorCountAccuracy, &vm.TotalObservations, &vm.Hostname, &vm.City, &vm.Region,
 				&vm.Country, &vm.Latitude, &vm.Longitude, &vm.PostalCode,
 				&vm.ASN, &vm.ASNOrganization, &vm.ASNType,
 			)
