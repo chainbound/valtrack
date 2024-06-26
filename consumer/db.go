@@ -56,7 +56,7 @@ var (
 
 	insertTrackerQuery = `
 		INSERT INTO validator_tracker (peer_id, enr, multiaddr, ip, port, last_seen, last_epoch, client_version, total_observations)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);`
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (peer_id) DO UPDATE SET total_observations = total_observations + 1;`
 
 	updateTrackerQuery = `
 		UPDATE validator_tracker
