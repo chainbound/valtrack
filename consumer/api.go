@@ -22,7 +22,7 @@ type ValidatorTracker struct {
 	ClientVersion          string  `json:"client_version"`
 	ValidatorCount         int     `json:"validator_count"`
 	ValidatorCountAccuracy float64 `json:"validator_count_accuracy"`
-	Hostname               *string `json:"hostname,omitempty"`
+	Hostname               string  `json:"hostname,omitempty"`
 	City                   string  `json:"city"`
 	Region                 string  `json:"region"`
 	Country                string  `json:"country"`
@@ -48,7 +48,7 @@ WHERE (vc.peer_id, vc.n_observations) IN (
 	SELECT peer_id, MAX(n_observations)
 	FROM validator_counts
 	GROUP BY peer_id
-	)
+	) AND city is not null
 `
 
 // LoadAPIKeys reads the API keys from a file and returns a map of keys
@@ -105,7 +105,7 @@ func createGetValidatorsHandler(db *sql.DB) http.HandlerFunc {
 				vm.ENR = ""
 				vm.Multiaddr = ""
 				vm.IP = ""
-				vm.Hostname = nil
+				vm.Hostname = ""
 				vm.Latitude = math.Round(vm.Latitude*10) / 10
 				vm.Longitude = math.Round(vm.Longitude*10) / 10
 			}
