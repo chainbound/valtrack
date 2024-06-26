@@ -167,12 +167,12 @@ type IPMetaData struct {
 	ASNType  string `json:"asn_type"`
 }
 
-func insertIPMetadata(db *sql.DB, ip IPMetaData) error {
+func insertIPMetadata(tx *sql.Tx, ip IPMetaData) error {
 	parts := strings.Split(ip.LatLong, ",")
 	lat, _ := strconv.ParseFloat(parts[0], 64)
 	long, _ := strconv.ParseFloat(parts[1], 64)
 
-	_, err := db.Exec(insertIpMetadataQuery, ip.IP, ip.Hostname, ip.City, ip.Region, ip.Country, lat, long, ip.Postal, ip.ASN, ip.ASNOrg, ip.ASNType)
+	_, err := tx.Exec(insertIpMetadataQuery, ip.IP, ip.Hostname, ip.City, ip.Region, ip.Country, lat, long, ip.Postal, ip.ASN, ip.ASNOrg, ip.ASNType)
 	if err != nil {
 		return err
 	}
@@ -278,7 +278,7 @@ func (c *Consumer) runValidatorMetadataEventHandler(token string) error {
 						ASNType:  asnType,
 					}
 
-					if err := insertIPMetadata(c.db, ipMeta); err != nil {
+					if err := insertIPMetadata(tx, ipMeta); err != nil {
 						c.log.Error().Err(err).Msg("Error inserting IP metadata")
 						return
 					}
