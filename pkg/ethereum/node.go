@@ -72,7 +72,7 @@ func NewNode(cfg *config.NodeConfig) (*Node, error) {
 	peerstore := NewPeerstore(30 * time.Second)
 
 	// TODO: read config from node config
-	conf := config.DefaultDiscConfig
+	conf := config.NewDefaultDiscConfig()
 	conf.NatsURL = cfg.NatsURL
 	disc, err := NewDiscoveryV5(discKey, &conf)
 	if err != nil {

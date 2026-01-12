@@ -30,7 +30,8 @@ func NewDiscovery(natsURL string) (*Discovery, error) {
 	privBytes = gcrypto.FromECDSA(key)
 	privateKey := (*crypto.Secp256k1PrivateKey)(secp256k1.PrivKeyFromBytes(privBytes))
 
-	nodeConfig := &config.DefaultNodeConfig
+	nodeConfig := new(config.NodeConfig)
+	*nodeConfig = config.NewDefaultNodeConfig()
 	nodeConfig.PrivateKey = privateKey
 	nodeConfig.BeaconConfig = params.MainnetConfig()
 	nodeConfig.NatsURL = natsURL

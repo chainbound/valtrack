@@ -148,8 +148,10 @@ func (r *ReqResp) RegisterHandlers(ctx context.Context) error {
 		p2p.RPCPingTopicV1:     r.pingHandler,
 		p2p.RPCGoodByeTopicV1:  r.goodbyeHandler,
 		p2p.RPCStatusTopicV1:   r.statusHandler,
+		p2p.RPCStatusTopicV2:   r.statusHandler, // V2 uses same Status message
 		p2p.RPCMetaDataTopicV1: r.metadataV1Handler,
 		p2p.RPCMetaDataTopicV2: r.metadataV2Handler,
+		p2p.RPCMetaDataTopicV3: r.metadataV3Handler,
 	}
 
 	for id, handler := range handlers {
@@ -277,6 +279,23 @@ func (r *ReqResp) metadataV2Handler(ctx context.Context, stream network.Stream) 
 	return stream.Close()
 }
 
+func (r *ReqResp) metadataV3Handler(ctx context.Context, stream network.Stream) error {
+	r.metaDataMu.RLock()
+	metaData := &pb.MetaDataV2{
+		SeqNumber:         r.metaData.SeqNumber,
+		Attnets:           r.metaData.Attnets,
+		Syncnets:          r.metaData.Syncnets,
+		CustodyGroupCount: 4, // Default custody group count for Fulu
+	}
+	r.metaDataMu.RUnlock()
+
+	if err := r.writeResponse(ctx, stream, metaData); err != nil {
+		return fmt.Errorf("write metadata v3 response: %w", err)
+	}
+
+	return stream.Close()
+}
+
 // getAgentVersion retrieves the agent version from the peerstore for the given peer.
 func (r *ReqResp) getAgentVersion(peerID peer.ID) (string, error) {
 	rawVal, err := r.host.Peerstore().Get(peerID, "AgentVersion")
@@ -308,10 +327,16 @@ func (r *ReqResp) Goodbye(ctx context.Context, pid peer.ID, code uint64) error {
 }
 
 // Status sends a status request to the given peer.
+// It tries V1 first, then falls back to V2 if V1 is not supported.
 func (r *ReqResp) Status(ctx context.Context, pid peer.ID) (status *pb.Status, err error) {
+	// Try V1 first (widely supported)
 	stream, err := r.host.NewStream(ctx, pid, r.protocolID(p2p.RPCStatusTopicV1))
 	if err != nil {
-		return nil, err
+		// Fallback to V2 for peers that only support V2
+		stream, err = r.host.NewStream(ctx, pid, r.protocolID(p2p.RPCStatusTopicV2))
+		if err != nil {
+			return nil, err
+		}
 	}
 	defer stream.Close()
 
