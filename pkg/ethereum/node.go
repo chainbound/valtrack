@@ -150,7 +150,7 @@ func (n *Node) FilterIncomingSubscriptions(pid peer.ID, opts []*pb.RPC_SubOpts) 
 	for _, opt := range opts {
 		topic := opt.GetTopicid()
 		if strings.Contains(topic, "beacon_attestation") {
-			// "/eth2/6a95a1a9/beacon_attestation_61/ssz_snappy"
+			// "/eth2/8c9f62fe/beacon_attestation_61/ssz_snappy"
 			subnetIndex := strings.Split(strings.Split(topic, "/")[3], "_")[2]
 
 			if idx, err := strconv.Atoi(subnetIndex); err == nil {
@@ -161,7 +161,7 @@ func (n *Node) FilterIncomingSubscriptions(pid peer.ID, opts []*pb.RPC_SubOpts) 
 	}
 
 	if len(attnets) > 0 {
-		n.log.Debug().Str("peer", pid.String()).Any("attnets", attnets).Msg("Filtering incoming subscriptions")
+		n.log.Debug().Str("peer", pid.String()).Any("attnets", attnets).Msg("Captured attestation subnet subscriptions")
 		n.peerstore.AddSubscribedSubnets(pid, attnets...)
 	}
 
@@ -170,12 +170,13 @@ func (n *Node) FilterIncomingSubscriptions(pid peer.ID, opts []*pb.RPC_SubOpts) 
 
 // Start runs the operational routines of the node, such as network services and handling connections.
 func (n *Node) Start(ctx context.Context) error {
-	status := &eth.Status{
-		ForkDigest:     n.cfg.ForkDigest[:],
-		FinalizedRoot:  make([]byte, 32),
-		FinalizedEpoch: 0,
-		HeadRoot:       make([]byte, 32),
-		HeadSlot:       0,
+	status := &eth.StatusV2{
+		ForkDigest:            n.cfg.ForkDigest[:],
+		FinalizedRoot:         make([]byte, 32),
+		FinalizedEpoch:        0,
+		HeadRoot:              make([]byte, 32),
+		HeadSlot:              0,
+		EarliestAvailableSlot: 0,
 	}
 
 	n.reqResp.SetStatus(status)
@@ -187,25 +188,8 @@ func (n *Node) Start(ctx context.Context) error {
 
 	n.log.Info().Msg("Starting node services")
 
-	// Register the node itself as the notifiee for network connection events
-	n.host.Network().Notify(n)
-
-	if n.js != nil {
-		// Start the metadata event publisher
-		n.startMetadataPublisher()
-	}
-	// Start the discovery service
-	go n.runDiscovery(ctx)
-
-	// Start the peer dialer service
-	for i := 0; i < n.cfg.ConcurrentDialers; i++ {
-		go n.runPeerDialer(ctx)
-	}
-
-	// Start the timer function to attempt reconnections every 30 seconds
-	go n.startReconnectionTimer()
-	n.startReconnectListener()
-
+	// Initialize GossipSub BEFORE starting discovery/dialing so we can capture
+	// subscription notifications from connected peers
 	psOpts := []pubsub.Option{
 		pubsub.WithMessageSignaturePolicy(pubsub.StrictNoSign),
 		pubsub.WithNoAuthor(),
@@ -228,6 +212,26 @@ func (n *Node) Start(ctx context.Context) error {
 	}
 
 	n.gs = gs
+
+	// Register the node itself as the notifiee for network connection events
+	n.host.Network().Notify(n)
+
+	if n.js != nil {
+		// Start the metadata event publisher
+		n.startMetadataPublisher()
+	}
+
+	// Start the discovery service
+	go n.runDiscovery(ctx)
+
+	// Start the peer dialer service
+	for i := 0; i < n.cfg.ConcurrentDialers; i++ {
+		go n.runPeerDialer(ctx)
+	}
+
+	// Start the timer function to attempt reconnections every 30 seconds
+	go n.startReconnectionTimer()
+	n.startReconnectListener()
 
 	<-ctx.Done()
 	n.log.Info().Msg("Shutting down node services")

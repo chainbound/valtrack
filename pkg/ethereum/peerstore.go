@@ -33,7 +33,7 @@ type PeerInfo struct {
 	lastSeen   time.Time
 	remoteAddr multiaddr.Multiaddr
 
-	status            *eth.Status
+	status            *eth.StatusV2
 	metadata          *eth.MetaDataV1 // Only interested in metadataV1
 	subscribedSubnets []int64
 	clientVersion     string
@@ -185,7 +185,7 @@ func (p *Peerstore) AddSubscribedSubnets(id peer.ID, subnet ...int64) {
 	}
 }
 
-func (p *Peerstore) SetStatus(id peer.ID, status *eth.Status) {
+func (p *Peerstore) SetStatus(id peer.ID, status *eth.StatusV2) {
 	p.Lock()
 	defer p.Unlock()
 
@@ -197,7 +197,7 @@ func (p *Peerstore) SetStatus(id peer.ID, status *eth.Status) {
 	}
 }
 
-func (p *Peerstore) Status(id peer.ID) *eth.Status {
+func (p *Peerstore) Status(id peer.ID) *eth.StatusV2 {
 	p.RLock()
 	defer p.RUnlock()
 
