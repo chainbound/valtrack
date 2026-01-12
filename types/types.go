@@ -1,6 +1,6 @@
 package types
 
-import "github.com/prysmaticlabs/go-bitfield"
+import "github.com/OffchainLabs/go-bitfield"
 
 type ValidatorEvent struct {
 	ENR       string `parquet:"name=enr, type=BYTE_ARRAY, convertedtype=UTF8" json:"enr" ch:"enr"`

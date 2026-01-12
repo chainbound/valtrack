@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/OffchainLabs/prysm/v7/beacon-chain/p2p/encoder"
+	eth "github.com/OffchainLabs/prysm/v7/proto/prysm/v1alpha1"
 	"github.com/chainbound/valtrack/config"
 	"github.com/chainbound/valtrack/log"
 	"github.com/chainbound/valtrack/types"
@@ -23,8 +25,6 @@ import (
 	gomplex "github.com/libp2p/go-mplex"
 	"github.com/nats-io/nats.go/jetstream"
 	"github.com/pkg/errors"
-	"github.com/prysmaticlabs/prysm/v5/beacon-chain/p2p/encoder"
-	eth "github.com/prysmaticlabs/prysm/v5/proto/prysm/v1alpha1"
 	"github.com/rs/zerolog"
 )
 
@@ -282,7 +282,6 @@ func (n *Node) startReconnectListener() {
 				} else {
 					n.log.Info().Str("peer", info.String()).Msg("Successfully reconnected to peer")
 				}
-
 			}()
 		}
 	}()

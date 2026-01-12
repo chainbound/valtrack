@@ -9,7 +9,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/multiformats/go-multiaddr"
 
-	eth "github.com/prysmaticlabs/prysm/v5/proto/prysm/v1alpha1"
+	eth "github.com/OffchainLabs/prysm/v7/proto/prysm/v1alpha1"
 )
 
 // ConnectionState signals the capacity for a connection with a given node.

@@ -8,11 +8,11 @@ import (
 
 	"github.com/chainbound/valtrack/config"
 
+	"github.com/OffchainLabs/prysm/v7/config/params"
 	"github.com/chainbound/valtrack/pkg/ethereum"
 	"github.com/decred/dcrd/dcrec/secp256k1/v4"
 	gcrypto "github.com/ethereum/go-ethereum/crypto"
 	crypto "github.com/libp2p/go-libp2p/core/crypto"
-	"github.com/prysmaticlabs/prysm/v5/config/params"
 )
 
 type Discovery struct {

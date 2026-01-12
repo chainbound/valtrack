@@ -9,11 +9,11 @@ import (
 	"os"
 	"sync"
 
+	"github.com/OffchainLabs/go-bitfield"
 	"github.com/chainbound/valtrack/config"
 	"github.com/chainbound/valtrack/log"
 	"github.com/chainbound/valtrack/types"
 	"github.com/libp2p/go-libp2p/core/peer"
-	"github.com/prysmaticlabs/go-bitfield"
 	"github.com/rs/zerolog"
 
 	glog "github.com/ethereum/go-ethereum/log"

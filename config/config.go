@@ -4,14 +4,17 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/OffchainLabs/prysm/v7/beacon-chain/p2p/encoder"
+	"github.com/OffchainLabs/prysm/v7/config/params"
+	pb "github.com/OffchainLabs/prysm/v7/proto/prysm/v1alpha1"
+	"github.com/OffchainLabs/prysm/v7/time/slots"
 	"github.com/ethereum/go-ethereum/p2p/enode"
 	"github.com/ethereum/go-ethereum/p2p/enr"
 	"github.com/libp2p/go-libp2p/core/crypto"
-	"github.com/prysmaticlabs/prysm/v5/beacon-chain/p2p/encoder"
-	"github.com/prysmaticlabs/prysm/v5/config/params"
-	"github.com/prysmaticlabs/prysm/v5/network/forks"
-	pb "github.com/prysmaticlabs/prysm/v5/proto/prysm/v1alpha1"
 )
+
+// Ethereum mainnet genesis time: December 1, 2020 12:00:23 UTC
+var mainnetGenesisTime = time.Unix(1606824023, 0)
 
 // Bootnodes
 var ethBootnodes []string = params.BeaconNetworkConfig().BootstrapNodes
@@ -51,14 +54,8 @@ var DefaultDiscConfig DiscConfig = DiscConfig{
 }
 
 func (d *DiscConfig) Eth2EnrEntry() (enr.Entry, error) {
-	// currentSlot := slots.Since(genesisTime)
-	// currentEpoch := slots.ToEpoch(currentSlot)
-
-	// TODO: not hardcoded, use timestamp to calculate
-	nextForkVersion, nextForkEpoch, err := forks.NextForkData(286168)
-	if err != nil {
-		return nil, fmt.Errorf("calculate next fork data: %w", err)
-	}
+	currentEpoch := slots.EpochsSinceGenesis(mainnetGenesisTime)
+	nextForkVersion, nextForkEpoch := params.NextForkData(currentEpoch)
 
 	enrForkID := &pb.ENRForkID{
 		CurrentForkDigest: d.ForkDigest[:],
