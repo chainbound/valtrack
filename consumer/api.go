@@ -8,6 +8,7 @@ import (
 	"math"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 )
 
@@ -35,10 +36,10 @@ type ValidatorTracker struct {
 	ASNType                string  `json:"asn_type"`
 }
 
-// Query to fetch data
-var selectQuery = `
+// Base query to fetch data
+var selectQueryBase = `
 SELECT vt.peer_id, vt.enr, vt.multiaddr, vt.ip, vt.port, vt.last_seen, vt.last_epoch,
-	   vt.client_version, vc.validator_count, 
+	   vt.client_version, vc.validator_count,
 	   CAST(vc.n_observations AS FLOAT) / vt.total_observations AS validator_count_accuracy, vt.total_observations,
 	   im.hostname, im.city, im.region, im.country, im.latitude, im.longitude,
 	   im.postal_code, im.asn, im.asn_organization, im.asn_type
@@ -77,10 +78,37 @@ func createGetValidatorsHandler(db *sql.DB) http.HandlerFunc {
 
 		isAdmin, _ := loadAPIKeys("api_keys.txt", apiKey)
 
+		// Parse time filter query params (unix timestamps in milliseconds)
+		query := selectQueryBase
+		var args []any
+
+		fromStr := r.URL.Query().Get("from")
+		toStr := r.URL.Query().Get("to")
+
+		if fromStr != "" {
+			from, err := strconv.ParseInt(fromStr, 10, 64)
+			if err != nil {
+				http.Error(w, "Invalid 'from' parameter: must be unix timestamp in milliseconds", http.StatusBadRequest)
+				return
+			}
+			query += " AND vt.last_seen >= ?"
+			args = append(args, from)
+		}
+
+		if toStr != "" {
+			to, err := strconv.ParseInt(toStr, 10, 64)
+			if err != nil {
+				http.Error(w, "Invalid 'to' parameter: must be unix timestamp in milliseconds", http.StatusBadRequest)
+				return
+			}
+			query += " AND vt.last_seen <= ?"
+			args = append(args, to)
+		}
+
 		// Map to store unique entries per peer_id
 		peerIDMap := make(map[string]ValidatorTracker)
 
-		rows, err := db.Query(selectQuery)
+		rows, err := db.Query(query, args...)
 		if err != nil {
 			http.Error(w, "Error querying database", http.StatusInternalServerError)
 			return
