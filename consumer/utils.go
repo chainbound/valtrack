@@ -3,7 +3,7 @@ package consumer
 import (
 	"math"
 
-	"github.com/prysmaticlabs/go-bitfield"
+	"github.com/OffchainLabs/go-bitfield"
 )
 
 func indexesFromBitfield(bitV bitfield.Bitvector64) []int64 {

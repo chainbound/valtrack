@@ -26,12 +26,13 @@ import (
 const BATCH_SIZE = 1024
 
 type ConsumerConfig struct {
-	LogLevel      string
-	NatsURL       string
-	Name          string
-	ChCfg         ch.ClickhouseConfig
-	DuneNamespace string
-	DuneApiKey    string
+	LogLevel            string
+	NatsURL             string
+	Name                string
+	ChCfg               ch.ClickhouseConfig
+	DuneNamespace       string
+	DuneApiKey          string
+	DunePublishInterval time.Duration
 }
 
 type Consumer struct {
@@ -202,13 +203,21 @@ func RunConsumer(cfg *ConsumerConfig) {
 
 	// Start publishing to Dune periodically
 	if dune != nil {
-		log.Info().Msg("Starting to publish to Dune")
+		// Default to 24 hours if not configured, minimum 1 minute
+		publishInterval := cfg.DunePublishInterval
+		if publishInterval == 0 {
+			publishInterval = 24 * time.Hour
+		} else if publishInterval < time.Minute {
+			publishInterval = time.Minute
+		}
+
+		log.Info().Dur("interval", publishInterval).Msg("Starting to publish to Dune")
 		go func() {
 			if err := consumer.publishToDune(); err != nil {
 				log.Error().Err(err).Msg("Error publishing to Dune")
 			}
 
-			ticker := time.NewTicker(24 * time.Hour) // Adjust the publishing time interval
+			ticker := time.NewTicker(publishInterval)
 			defer ticker.Stop()
 
 			for range ticker.C {

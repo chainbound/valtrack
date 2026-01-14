@@ -2,6 +2,7 @@
 package ethereum
 
 import (
+	"bytes"
 	"crypto/ecdsa"
 	"encoding/binary"
 	"encoding/hex"
@@ -11,13 +12,54 @@ import (
 
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/peer"
-	"github.com/migalabs/armiarma/src/utils"
 	"github.com/pkg/errors"
+	"github.com/protolambda/ztyp/codec"
 
 	gcrypto "github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/p2p/enode"
 	"github.com/protolambda/zrnt/eth2/beacon/common"
 )
+
+// ENR entry keys
+const (
+	attnetsENRKey = "attnets"
+	eth2ENRKey    = "eth2"
+)
+
+// AttnetsENREntry represents the attnets ENR entry
+type AttnetsENREntry []byte
+
+func (aee AttnetsENREntry) ENRKey() string {
+	return attnetsENRKey
+}
+
+// Eth2ENREntry represents the eth2 ENR entry
+type Eth2ENREntry []byte
+
+func (eee Eth2ENREntry) ENRKey() string {
+	return eth2ENRKey
+}
+
+func (eee Eth2ENREntry) Eth2Data() (*common.Eth2Data, error) {
+	var dat common.Eth2Data
+	if err := dat.Deserialize(codec.NewDecodingReader(bytes.NewReader(eee), uint64(len(eee)))); err != nil {
+		return nil, err
+	}
+	return &dat, nil
+}
+
+// parseNodeEth2Data parses the Node and obtains Eth2Data information
+func parseNodeEth2Data(n enode.Node) (data *common.Eth2Data, exists bool, err error) {
+	var eth2 Eth2ENREntry
+	if err := n.Load(&eth2); err != nil {
+		return nil, false, nil
+	}
+	dat, err := eth2.Eth2Data()
+	if err != nil {
+		return nil, true, err
+	}
+	return dat, true, nil
+}
 
 var (
 	EnrValidationError   error = errors.New("error validating ENR")
@@ -72,7 +114,7 @@ func ParseEnr(node *enode.Node) (*EnrNode, error) {
 	enrNode.Pubkey = node.Pubkey()
 
 	// Retrieve the Fork Digest and the attestnets
-	eth2Data, ok, err := utils.ParseNodeEth2Data(*node)
+	eth2Data, ok, err := parseNodeEth2Data(*node)
 	if !ok {
 		eth2Data = new(common.Eth2Data)
 	} else {
@@ -123,14 +165,14 @@ func (enr *EnrNode) GetAttnetsString() string {
 }
 
 type Attnets struct {
-	Raw       utils.AttnetsENREntry
+	Raw       AttnetsENREntry
 	NetNumber int
 }
 
 // ParseAttnets returns always an initialized Attnet object
 // If the Ethereum Node doesn't have the Attnets key-value NetNumber will be -1
 func ParseAttnets(node enode.Node) (attnets *Attnets, exists bool, err error) {
-	attNetEntry := new(utils.AttnetsENREntry)
+	attNetEntry := new(AttnetsENREntry)
 	att := &Attnets{
 		Raw:       *attNetEntry,
 		NetNumber: -1,

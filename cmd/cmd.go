@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/chainbound/valtrack/clickhouse"
 	"github.com/chainbound/valtrack/consumer"
@@ -65,6 +66,11 @@ var ConsumerCommand = &cli.Command{
 			Name:  "dune.api-key",
 			Usage: "Dune API key",
 		},
+		&cli.DurationFlag{
+			Name:  "dune.publish-interval",
+			Usage: "Interval for publishing to Dune default 24h",
+			Value: 24 * time.Hour,
+		},
 		&cli.Uint64Flag{
 			Name:  "batch-size",
 			Usage: "Clickhouse max validator batch size",
@@ -95,11 +101,12 @@ var SentryCommand = &cli.Command{
 
 func runConsumer(c *cli.Context) error {
 	cfg := consumer.ConsumerConfig{
-		LogLevel:      c.String("log-level"),
-		NatsURL:       c.String("nats-url"),
-		Name:          c.String("name"),
-		DuneNamespace: c.String("dune.namespace"),
-		DuneApiKey:    c.String("dune.api-key"),
+		LogLevel:            c.String("log-level"),
+		NatsURL:             c.String("nats-url"),
+		Name:                c.String("name"),
+		DuneNamespace:       c.String("dune.namespace"),
+		DuneApiKey:          c.String("dune.api-key"),
+		DunePublishInterval: c.Duration("dune.publish-interval"),
 		ChCfg: clickhouse.ClickhouseConfig{
 			Endpoint:              c.String("endpoint"),
 			DB:                    c.String("db"),

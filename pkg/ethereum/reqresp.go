@@ -9,18 +9,18 @@ import (
 	"sync"
 	"time"
 
+	"github.com/OffchainLabs/go-bitfield"
+	"github.com/OffchainLabs/prysm/v7/beacon-chain/p2p"
+	"github.com/OffchainLabs/prysm/v7/beacon-chain/p2p/encoder"
+	"github.com/OffchainLabs/prysm/v7/beacon-chain/p2p/types"
+	"github.com/OffchainLabs/prysm/v7/consensus-types/primitives"
+	pb "github.com/OffchainLabs/prysm/v7/proto/prysm/v1alpha1"
 	"github.com/chainbound/valtrack/log"
-	ssz "github.com/ferranbt/fastssz"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/core/protocol"
-	"github.com/prysmaticlabs/go-bitfield"
-	"github.com/prysmaticlabs/prysm/v5/beacon-chain/p2p"
-	"github.com/prysmaticlabs/prysm/v5/beacon-chain/p2p/encoder"
-	"github.com/prysmaticlabs/prysm/v5/beacon-chain/p2p/types"
-	"github.com/prysmaticlabs/prysm/v5/consensus-types/primitives"
-	pb "github.com/prysmaticlabs/prysm/v5/proto/prysm/v1alpha1"
+	ssz "github.com/prysmaticlabs/fastssz"
 	"github.com/rs/zerolog"
 	"golang.org/x/time/rate"
 )
@@ -42,7 +42,7 @@ type ReqResp struct {
 	metaData   *pb.MetaDataV1
 	metaDataMu sync.RWMutex
 
-	status    *pb.Status
+	status    *pb.StatusV2
 	statusMu  sync.RWMutex
 	statusLim *rate.Limiter
 
@@ -79,7 +79,7 @@ func NewReqResp(h host.Host, peerstore *Peerstore, cfg *ReqRespConfig) (*ReqResp
 	return p, nil
 }
 
-func (r *ReqResp) cpyStatus() *pb.Status {
+func (r *ReqResp) cpyStatus() *pb.StatusV2 {
 	r.statusMu.RLock()
 	defer r.statusMu.RUnlock()
 
@@ -87,16 +87,17 @@ func (r *ReqResp) cpyStatus() *pb.Status {
 		return nil
 	}
 
-	return &pb.Status{
-		ForkDigest:     bytes.Clone(r.status.ForkDigest),
-		FinalizedRoot:  bytes.Clone(r.status.FinalizedRoot),
-		FinalizedEpoch: r.status.FinalizedEpoch,
-		HeadRoot:       bytes.Clone(r.status.HeadRoot),
-		HeadSlot:       r.status.HeadSlot,
+	return &pb.StatusV2{
+		ForkDigest:            bytes.Clone(r.status.ForkDigest),
+		FinalizedRoot:         bytes.Clone(r.status.FinalizedRoot),
+		FinalizedEpoch:        r.status.FinalizedEpoch,
+		HeadRoot:              bytes.Clone(r.status.HeadRoot),
+		HeadSlot:              r.status.HeadSlot,
+		EarliestAvailableSlot: r.status.EarliestAvailableSlot,
 	}
 }
 
-func (r *ReqResp) SetStatus(status *pb.Status) {
+func (r *ReqResp) SetStatus(status *pb.StatusV2) {
 	r.statusMu.Lock()
 	defer r.statusMu.Unlock()
 
@@ -144,12 +145,12 @@ func (r *ReqResp) RegisterHandlers(ctx context.Context) error {
 		return fmt.Errorf("chain metadata is nil")
 	}
 
+	// Register Fulu protocol handlers
 	handlers := map[string]ContextStreamHandler{
 		p2p.RPCPingTopicV1:     r.pingHandler,
 		p2p.RPCGoodByeTopicV1:  r.goodbyeHandler,
-		p2p.RPCStatusTopicV1:   r.statusHandler,
-		p2p.RPCMetaDataTopicV1: r.metadataV1Handler,
-		p2p.RPCMetaDataTopicV2: r.metadataV2Handler,
+		p2p.RPCStatusTopicV2:   r.statusHandler,
+		p2p.RPCMetaDataTopicV3: r.metadataV3Handler,
 	}
 
 	for id, handler := range handlers {
@@ -206,8 +207,8 @@ func (r *ReqResp) goodbyeHandler(ctx context.Context, stream network.Stream) err
 
 func (r *ReqResp) statusHandler(ctx context.Context, stream network.Stream) error {
 	pid := stream.Conn().RemotePeer()
-	// First, read the incoming status request.
-	req := &pb.Status{}
+	// Read the incoming status request (V2 format).
+	req := &pb.StatusV2{}
 	if err := r.readRequest(ctx, stream, req); err != nil {
 		return fmt.Errorf("read status request: %w", err)
 	}
@@ -246,32 +247,18 @@ func (r *ReqResp) pingHandler(ctx context.Context, stream network.Stream) error 
 	return stream.Close()
 }
 
-func (r *ReqResp) metadataV1Handler(ctx context.Context, stream network.Stream) error {
+func (r *ReqResp) metadataV3Handler(ctx context.Context, stream network.Stream) error {
 	r.metaDataMu.RLock()
-	metaData := &pb.MetaDataV0{
-		SeqNumber: r.metaData.SeqNumber,
-		Attnets:   r.metaData.Attnets,
+	metaData := &pb.MetaDataV2{
+		SeqNumber:         r.metaData.SeqNumber,
+		Attnets:           r.metaData.Attnets,
+		Syncnets:          r.metaData.Syncnets,
+		CustodyGroupCount: 4, // Default custody group count for Fulu
 	}
 	r.metaDataMu.RUnlock()
 
 	if err := r.writeResponse(ctx, stream, metaData); err != nil {
-		return fmt.Errorf("write meta data v1: %w", err)
-	}
-
-	return stream.Close()
-}
-
-func (r *ReqResp) metadataV2Handler(ctx context.Context, stream network.Stream) error {
-	r.metaDataMu.RLock()
-	metaData := &pb.MetaDataV1{
-		SeqNumber: r.metaData.SeqNumber,
-		Attnets:   r.metaData.Attnets,
-		Syncnets:  r.metaData.Syncnets,
-	}
-	r.metaDataMu.RUnlock()
-
-	if err := r.writeResponse(ctx, stream, metaData); err != nil {
-		return fmt.Errorf("write metadata response: %w", err)
+		return fmt.Errorf("write metadata v3 response: %w", err)
 	}
 
 	return stream.Close()
@@ -307,15 +294,14 @@ func (r *ReqResp) Goodbye(ctx context.Context, pid peer.ID, code uint64) error {
 	return nil
 }
 
-// Status sends a status request to the given peer.
-func (r *ReqResp) Status(ctx context.Context, pid peer.ID) (status *pb.Status, err error) {
-	stream, err := r.host.NewStream(ctx, pid, r.protocolID(p2p.RPCStatusTopicV1))
+// Status sends a status request to the given peer using V2 (Fulu).
+func (r *ReqResp) Status(ctx context.Context, pid peer.ID) (*pb.StatusV2, error) {
+	stream, err := r.host.NewStream(ctx, pid, r.protocolID(p2p.RPCStatusTopicV2))
 	if err != nil {
 		return nil, err
 	}
 	defer stream.Close()
 
-	// actually write the data to the stream
 	req := r.cpyStatus()
 	if req == nil {
 		return nil, fmt.Errorf("status unknown")
@@ -325,8 +311,7 @@ func (r *ReqResp) Status(ctx context.Context, pid peer.ID) (status *pb.Status, e
 		return nil, fmt.Errorf("write status request: %w", err)
 	}
 
-	// read and decode status response
-	resp := &pb.Status{}
+	resp := &pb.StatusV2{}
 	if err := r.readResponse(ctx, stream, resp); err != nil {
 		return nil, fmt.Errorf("read status response: %w", err)
 	}
@@ -360,21 +345,25 @@ func (r *ReqResp) Ping(ctx context.Context, pid peer.ID) error {
 	return nil
 }
 
-// MetaData sends a metadata request to the given peer.
+// MetaData sends a metadata request to the given peer using V3 (Fulu).
 func (r *ReqResp) MetaData(ctx context.Context, pid peer.ID) (resp *pb.MetaDataV1, err error) {
-	stream, err := r.host.NewStream(ctx, pid, r.protocolID(p2p.RPCMetaDataTopicV2))
+	stream, err := r.host.NewStream(ctx, pid, r.protocolID(p2p.RPCMetaDataTopicV3))
 	if err != nil {
 		return nil, fmt.Errorf("failed to open metadata stream to peer %s: %w", pid, err)
 	}
 	defer stream.Close()
 
-	// read and decode status response
-	resp = &pb.MetaDataV1{}
-	if err := r.readResponse(ctx, stream, resp); err != nil {
-		return resp, fmt.Errorf("read ping response: %w", err)
+	// V3 returns MetaDataV2, convert to V1 for compatibility
+	respV2 := &pb.MetaDataV2{}
+	if err := r.readResponse(ctx, stream, respV2); err != nil {
+		return nil, fmt.Errorf("read metadata response: %w", err)
 	}
 
-	return resp, nil
+	return &pb.MetaDataV1{
+		SeqNumber: respV2.SeqNumber,
+		Attnets:   respV2.Attnets,
+		Syncnets:  respV2.Syncnets,
+	}, nil
 }
 
 // readRequest reads a request from the given network stream and populates the

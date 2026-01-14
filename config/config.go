@@ -4,14 +4,23 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/OffchainLabs/prysm/v7/beacon-chain/p2p/encoder"
+	"github.com/OffchainLabs/prysm/v7/config/params"
+	pb "github.com/OffchainLabs/prysm/v7/proto/prysm/v1alpha1"
+	"github.com/OffchainLabs/prysm/v7/time/slots"
 	"github.com/ethereum/go-ethereum/p2p/enode"
 	"github.com/ethereum/go-ethereum/p2p/enr"
 	"github.com/libp2p/go-libp2p/core/crypto"
-	"github.com/prysmaticlabs/prysm/v5/beacon-chain/p2p/encoder"
-	"github.com/prysmaticlabs/prysm/v5/config/params"
-	"github.com/prysmaticlabs/prysm/v5/network/forks"
-	pb "github.com/prysmaticlabs/prysm/v5/proto/prysm/v1alpha1"
 )
+
+// Ethereum mainnet genesis time: December 1, 2020 12:00:23 UTC
+var mainnetGenesisTime = time.Unix(1606824023, 0)
+
+// CurrentForkDigest returns the current fork digest based on the current epoch.
+func CurrentForkDigest() [4]byte {
+	currentEpoch := slots.EpochsSinceGenesis(mainnetGenesisTime)
+	return params.ForkDigest(currentEpoch)
+}
 
 // Bootnodes
 var ethBootnodes []string = params.BeaconNetworkConfig().BootstrapNodes
@@ -40,28 +49,26 @@ type DiscConfig struct {
 	NatsURL    string
 }
 
-var DefaultDiscConfig DiscConfig = DiscConfig{
-	IP:         "0.0.0.0",
-	UDP:        9000,
-	TCP:        9000,
-	DBPath:     "",
-	ForkDigest: [4]byte{0x6a, 0x95, 0xa1, 0xa9},
-	LogPath:    "discovery_events.log",
-	Bootnodes:  GetEthereumBootnodes(),
+// NewDefaultDiscConfig returns a DiscConfig with default values and the current fork digest.
+func NewDefaultDiscConfig() DiscConfig {
+	return DiscConfig{
+		IP:         "0.0.0.0",
+		UDP:        9000,
+		TCP:        9000,
+		DBPath:     "",
+		ForkDigest: CurrentForkDigest(),
+		LogPath:    "discovery_events.log",
+		Bootnodes:  GetEthereumBootnodes(),
+	}
 }
 
 func (d *DiscConfig) Eth2EnrEntry() (enr.Entry, error) {
-	// currentSlot := slots.Since(genesisTime)
-	// currentEpoch := slots.ToEpoch(currentSlot)
-
-	// TODO: not hardcoded, use timestamp to calculate
-	nextForkVersion, nextForkEpoch, err := forks.NextForkData(286168)
-	if err != nil {
-		return nil, fmt.Errorf("calculate next fork data: %w", err)
-	}
+	currentEpoch := slots.EpochsSinceGenesis(mainnetGenesisTime)
+	currentForkDigest := params.ForkDigest(currentEpoch)
+	nextForkVersion, nextForkEpoch := params.NextForkData(currentEpoch)
 
 	enrForkID := &pb.ENRForkID{
-		CurrentForkDigest: d.ForkDigest[:],
+		CurrentForkDigest: currentForkDigest[:],
 		NextForkVersion:   nextForkVersion[:],
 		NextForkEpoch:     nextForkEpoch,
 	}
@@ -88,14 +95,17 @@ type NodeConfig struct {
 	LogPath           string
 }
 
-var DefaultNodeConfig NodeConfig = NodeConfig{
-	PrivateKey:        nil,
-	BeaconConfig:      nil,
-	ForkDigest:        [4]byte{0x6a, 0x95, 0xa1, 0xa9},
-	Encoder:           encoder.SszNetworkEncoder{},
-	DialTimeout:       10 * time.Second,
-	ConcurrentDialers: 64,
-	IP:                "0.0.0.0",
-	Port:              9000,
-	LogPath:           "metadata_events.log",
+// NewDefaultNodeConfig returns a NodeConfig with default values and the current fork digest.
+func NewDefaultNodeConfig() NodeConfig {
+	return NodeConfig{
+		PrivateKey:        nil,
+		BeaconConfig:      nil,
+		ForkDigest:        CurrentForkDigest(),
+		Encoder:           encoder.SszNetworkEncoder{},
+		DialTimeout:       10 * time.Second,
+		ConcurrentDialers: 64,
+		IP:                "0.0.0.0",
+		Port:              9000,
+		LogPath:           "metadata_events.log",
+	}
 }
